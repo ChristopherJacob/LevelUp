@@ -1,0 +1,6 @@
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+
+# Helps with DMA allocations and PSRAM usage choices depending on your module
+CONFIG_SPIRAM_SUPPORT=y
+CONFIG_SPIRAM=y
