@@ -43,15 +43,22 @@ rest:
 Recommended polling interval: 5–10 seconds. Shorter intervals increase Wi-Fi traffic and
 power use. If you plan to display an always-on dashboard, 5 seconds is a good compromise.
 
-2. MQTT topics & payload schema (publish plan)
+2. MQTT topics & payload schema (implemented)
 
-If you want push updates and Home Assistant auto-discovery, publish MQTT messages from the
-firmware. Suggested topic structure:
+If you want push updates and Home Assistant auto-discovery, MQTT is supported in firmware.
+Configure the broker and topics via `menuconfig` (defaults are shown below). Suggested
+topic structure:
 
 ```
 levelup/<device_id>/state
 levelup/<device_id>/availability
 ```
+
+Defaults (configurable via `menuconfig`):
+
+- Broker URI: `mqtt://homeassistant.local`
+- Topic prefix: `levelup`
+- Discovery prefix: `homeassistant`
 
 Suggested payload for `state` (JSON):
 
@@ -68,11 +75,11 @@ Suggested payload for `state` (JSON):
 Suggested payload for `availability`:
 
 ```json
-{ "status": "online" }
+"online"
 ```
 
-Recommended publish rate: 5–10 Hz if you need near-real-time response, or 1 Hz for general
-monitoring dashboards.
+Recommended publish rate: 5 Hz for responsive dashboards, or 1 Hz for low-traffic monitoring.
+Use `menuconfig` to change `LevelUp MQTT → Publish rate (Hz)`.
 
 3. Home Assistant MQTT discovery (example)
 
@@ -85,10 +92,10 @@ Configure auto-discovery payloads so Home Assistant creates entities automatical
   "value_template": "{{ value_json.roll_deg }}",
   "unit_of_measurement": "°",
   "availability_topic": "levelup/<device_id>/availability",
-  "payload_available": "{\"status\":\"online\"}",
-  "payload_not_available": "{\"status\":\"offline\"}",
+  "payload_available": "online",
+  "payload_not_available": "offline",
   "device": {
-    "identifiers": ["levelup-<device_id>"],
+    "identifiers": ["levelup_<device_id>"],
     "name": "LevelUp",
     "manufacturer": "LevelUp",
     "model": "ESP32"

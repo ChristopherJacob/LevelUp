@@ -1,0 +1,32 @@
+menu "LevelUp MQTT"
+
+config LEVELUP_MQTT_ENABLE
+    bool "Enable MQTT telemetry"
+    default y
+
+config LEVELUP_MQTT_BROKER_URI
+    string "MQTT broker URI"
+    default "mqtt://homeassistant.local"
+
+config LEVELUP_MQTT_USERNAME
+    string "MQTT username"
+    default ""
+
+config LEVELUP_MQTT_PASSWORD
+    string "MQTT password"
+    default ""
+
+config LEVELUP_MQTT_TOPIC_PREFIX
+    string "MQTT topic prefix"
+    default "levelup"
+
+config LEVELUP_MQTT_DISCOVERY_PREFIX
+    string "Home Assistant discovery prefix"
+    default "homeassistant"
+
+config LEVELUP_MQTT_PUBLISH_HZ
+    int "Publish rate (Hz)"
+    range 1 50
+    default 5
+
+endmenu

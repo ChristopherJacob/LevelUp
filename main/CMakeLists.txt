@@ -9,6 +9,7 @@ idf_component_register(
     "expander.c"
     "level_bubble.c"
     "wifi_mgr.c"
+    "mqtt_mgr.c"
   INCLUDE_DIRS "."
   REQUIRES
     driver
@@ -25,5 +26,5 @@ idf_component_register(
     esp_netif
     esp_event
     esp_http_server
+    mqtt
 )
-

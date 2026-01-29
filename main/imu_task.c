@@ -11,6 +11,7 @@
 #include "lvgl_port.h"
 #include "ui.h"
 #include "wifi_mgr.h"   // <-- ADD THIS
+#include "mqtt_mgr.h"
 
 #include <math.h>
 
@@ -138,6 +139,7 @@ static void imu_task(void *arg)
 
                     // Publish values to web status page (match UI smoothness)
                     wifi_mgr_update_angles(roll_f, pitch_f);
+                    mqtt_mgr_update_angles(roll_f, pitch_f);
 
                     lvgl_port_unlock();
                 }
