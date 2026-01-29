@@ -1,3 +1,38 @@
+# Build and IDE files
+build/
+build/**
+bootloader/build/
+.vscode/
+.idea/
+.cache/
+
+# ESP-IDF generated
+sdkconfig
+sdkconfig.old
+sdkconfig.*.in
+sdkconfig.cmake
+config.env
+project_description.json
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+
+# Binary artifacts
+*.elf
+*.bin
+*.map
+*.hex
+
+# Partition table
+partition_table/
+
+# Python and OS
+__pycache__/
+*.pyc
+.DS_Store
+
+# lock files
+dependencies.lock
 # macOS
 .DS_Store
 .AppleDouble

@@ -1,5 +1,29 @@
 idf_component_register(
-  SRCS "app_main.c" "display.c"
+  SRCS
+    "app_main.c"
+    "display.c"
+    "lvgl_port.c"
+    "ui.c"
+    "imu_task.c"
+    "i2c_bus.c"
+    "expander.c"
+    "level_bubble.c"
+    "wifi_mgr.c"
   INCLUDE_DIRS "."
-  REQUIRES driver esp_lcd esp_timer esp_io_expander
+  REQUIRES
+    driver
+    esp_driver_i2c
+    esp_lcd
+    esp_timer
+    esp_lcd_sh8601
+    esp_io_expander
+    esp_io_expander_tca9554
+    lvgl
+    waveshare__qmi8658
+    nvs_flash
+    esp_wifi
+    esp_netif
+    esp_event
+    esp_http_server
 )
+

@@ -7,6 +7,11 @@
 #define PIN_I2C_SDA         GPIO_NUM_15
 #define I2C_CLK_HZ          (200 * 1000)
 
+//--Adding the INT for the touch in the safe way. Commented line is the other way that may work.
+//#define PIN_TOUCH_INT  (-1)
+#define PIN_TOUCH_INT  GPIO_NUM_21
+
+
 // ---- AMOLED (SH8601) QSPI ----
 #define PIN_LCD_CS          GPIO_NUM_12
 #define PIN_LCD_SCLK        GPIO_NUM_11
