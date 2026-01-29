@@ -14,4 +14,8 @@ idf.py build
 idf.py -p /dev/ttyUSB0 flash
 ```
 
-License: not specified — please add a `LICENSE` file if desired.
+License
+
+This project is dedicated to the public domain under the CC0 1.0 Universal license. See the `LICENSE` file for the full text.
+
+Repository license: CC0-1.0 (public domain)
