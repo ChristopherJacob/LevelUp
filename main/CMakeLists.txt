@@ -8,11 +8,18 @@ idf_component_register(
     "i2c_bus.c"
     "expander.c"
     "level_bubble.c"
+    "ds_digit_36.c"
+    "main_ui_bg.c"
+    "splash_screen.c"
     "wifi_mgr.c"
+    "mqtt_mgr.c"
+    "audio_mgr.c"
+    "button_mgr.c"
   INCLUDE_DIRS "."
   REQUIRES
     driver
     esp_driver_i2c
+    esp_driver_i2s
     esp_lcd
     esp_timer
     esp_lcd_sh8601
@@ -25,5 +32,7 @@ idf_component_register(
     esp_netif
     esp_event
     esp_http_server
+    mqtt
+    dns_server
+    esp_codec_dev
 )
-

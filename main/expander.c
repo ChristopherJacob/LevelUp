@@ -77,3 +77,8 @@ esp_err_t expander_power_sequence(i2c_master_bus_handle_t bus)
 
     return ESP_OK;
 }
+
+esp_io_expander_handle_t expander_get_handle(void)
+{
+    return s_ex;
+}

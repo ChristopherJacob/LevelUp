@@ -9,8 +9,18 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.5.3
+  espressif/esp_codec_dev:
+    component_hash: 0d9e9bc288156eb55f79338d312e1ebf8c9dfbd5e7d13ef0f20ccb031b4e15cf
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.5.4
   espressif/esp_io_expander:
-    component_hash: abf3ea0d71407d79d15500550aa3ba433848459b0fa94717cf9478822593ee5d
+    component_hash: 034903704f65e3994d7cce9d080b19d89525cf6d416574b932826adf680f3942
     dependencies:
     - name: idf
       require: private
@@ -18,7 +28,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.1.0
+    version: 1.2.0
   espressif/esp_io_expander_tca9554:
     component_hash: b8d7ff823eed8a8c05c49f01d554d08f75146a17a1c50bfb354b6c4c8819fc05
     dependencies:
@@ -93,6 +103,7 @@ dependencies:
       type: service
     version: 1.0.1
 direct_dependencies:
+- espressif/esp_codec_dev
 - espressif/esp_io_expander
 - espressif/esp_io_expander_tca9554
 - espressif/esp_lcd_sh8601
@@ -100,6 +111,6 @@ direct_dependencies:
 - idf
 - lvgl/lvgl
 - waveshare/qmi8658
-manifest_hash: fde06689e1a251ea9ffd436ada0c9be35fb30185923f2118c44971c502b88b35
+manifest_hash: 32a74b495e080b0e3cc40ed3d52bf3c379123d14d0cf0b318a40842f82a1671f
 target: esp32s3
 version: 2.0.0

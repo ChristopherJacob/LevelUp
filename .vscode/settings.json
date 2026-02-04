@@ -16,5 +16,6 @@
     "--query-driver=**",
     "--compile-commands-dir=/Users/cjacob/Development/leveler_min/build"
   ],
-  "idf.flashType": "JTAG"
+  "idf.flashType": "JTAG",
+  "chatgpt.openOnStartup": true
 }

@@ -30,9 +30,12 @@ static const char *TAG = "lvgl_port";
 #define LVGL_TASK_MIN_DELAY_MS     1
 #define LVGL_TASK_STACK_SIZE    (6 * 1024)
 #define LVGL_TASK_PRIORITY         2
+// Default auto-blank timeout for the AMOLED after inactivity.
+#define SCREEN_TIMEOUT_DEFAULT_MS      (60 * 1000)
 
 static SemaphoreHandle_t s_lvgl_mux = NULL;
 static lv_display_t *s_disp = NULL;
+static esp_lcd_panel_handle_t s_panel = NULL;
 
 // Touch
 static esp_lcd_touch_handle_t s_touch = NULL;
@@ -49,6 +52,9 @@ static lv_draw_buf_t *s_buf2 = NULL;
 // Backing memory for the draw buffers (DMA-capable)
 static void *s_buf1_mem = NULL;
 static void *s_buf2_mem = NULL;
+static bool s_screen_on = true;
+static int64_t s_last_touch_us = 0;
+static uint32_t s_screen_timeout_ms = SCREEN_TIMEOUT_DEFAULT_MS;
 
 /* ----------------------------------------------------------------
  * BEGIN COLOR-FIX SUPPORT
@@ -78,6 +84,16 @@ static void lvgl_tick_cb(void *arg)
     lv_tick_inc(LVGL_TICK_PERIOD_MS);
 }
 
+// Toggle panel power state (used by inactivity blanking and wake-on-touch).
+static void lvgl_set_screen_power(bool on)
+{
+    if (!s_panel || s_screen_on == on) return;
+    if (esp_lcd_panel_disp_on_off(s_panel, on) == ESP_OK) {
+        s_screen_on = on;
+        ESP_LOGI(TAG, "screen %s", on ? "ON" : "OFF");
+    }
+}
+
 bool lvgl_port_lock(int timeout_ms)
 {
     if (!s_lvgl_mux) return false;
@@ -97,6 +113,14 @@ static void lvgl_task(void *arg)
 
     uint32_t delay_ms = LVGL_TASK_MAX_DELAY_MS;
     while (1) {
+        // Blank the screen after timeout, but keep touch active so tap can wake it.
+        if (s_screen_timeout_ms > 0 && s_screen_on && s_last_touch_us > 0) {
+            int64_t idle_us = esp_timer_get_time() - s_last_touch_us;
+            if (idle_us > ((int64_t)s_screen_timeout_ms * 1000LL)) {
+                lvgl_set_screen_power(false);
+            }
+        }
+
         if (lvgl_port_lock(-1)) {
             delay_ms = lv_timer_handler();
             lvgl_port_unlock();
@@ -200,6 +224,12 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         data->state = LV_INDEV_STATE_PRESSED;
         data->point.x = x;
         data->point.y = y;
+
+        s_last_touch_us = esp_timer_get_time();
+        if (!s_screen_on) {
+            // Wake immediately on first touch.
+            lvgl_set_screen_power(true);
+        }
     }
 }
 
@@ -275,6 +305,8 @@ esp_err_t lvgl_port_init(void)
 
     ESP_LOGI(TAG, "lv_init()");
     lv_init();
+    s_panel = panel;
+    s_last_touch_us = esp_timer_get_time();
 
     s_lvgl_mux = xSemaphoreCreateMutex();
     if (!s_lvgl_mux) return ESP_ERR_NO_MEM;
@@ -356,4 +388,28 @@ esp_err_t lvgl_port_init(void)
 
     ESP_LOGI(TAG, "LVGL port init OK");
     return ESP_OK;
+}
+
+// Update screen timeout at runtime from settings UI.
+void lvgl_port_set_screen_timeout_ms(uint32_t timeout_ms)
+{
+    s_screen_timeout_ms = timeout_ms;
+    if (timeout_ms == 0) {
+        // If timeout is disabled while blanked, wake immediately.
+        lvgl_set_screen_power(true);
+    }
+}
+
+void lvgl_port_set_screen_on(bool on)
+{
+    lvgl_set_screen_power(on);
+    if (on) {
+        // Treat a manual wake like activity so we don't immediately blank again.
+        s_last_touch_us = esp_timer_get_time();
+    }
+}
+
+bool lvgl_port_is_screen_on(void)
+{
+    return s_screen_on;
 }
