@@ -11,8 +11,7 @@ fi
 # Ensure the fallback points to LV_FONT_DEFAULT for LVGL >= 8.2 builds.
 # This keeps the degree symbol (and other missing glyphs) rendering even
 # if the digit font doesn't include them.
-python3 - <<'PY'
-import io
+python3 - "$FONT_FILE" <<'PY'
 import sys
 from pathlib import Path
 
@@ -27,4 +26,3 @@ if needle in text:
 else:
     print(f"No fallback patch needed in {path}")
 PY
-"$FONT_FILE"

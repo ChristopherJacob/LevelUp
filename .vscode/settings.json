@@ -5,7 +5,7 @@
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-  "idf.port": "/dev/tty.usbmodem141201",
+  "idf.port": "rfc2217://192.168.12.172:2000",
   "idf.toolsPath": "/Users/cjacob/.espressif",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
@@ -14,8 +14,9 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=/Users/cjacob/Development/leveler_min/build"
+    "--compile-commands-dir=/Users/cjacob/Development/LevelUp/build"
   ],
-  "idf.flashType": "JTAG",
-  "chatgpt.openOnStartup": true
+  "idf.flashType": "UART",
+  "chatgpt.openOnStartup": true,
+  "claudeCode.useTerminal": true
 }
