@@ -972,15 +972,20 @@ static esp_err_t http_scan_json_get(httpd_req_t *req)
     send_chunk(req, "\"networks\":[");
     for (int i = 0; i < n; i++) {
         const char *comma = (i == n - 1) ? "" : ",";
-        // Minimal JSON escaping for SSID (handle quotes/backslashes)
-        char esc[80] = {0};
+        // JSON-escape SSID: handle quotes, backslashes, and control characters.
+        char esc[192] = {0};  // worst case: 32 bytes * 6 chars (\uXXXX) + NUL
         const char *in = items[i].ssid;
         char *o = esc;
         size_t left = sizeof(esc) - 1;
         while (*in && left > 0) {
-            if (*in == '\"' || *in == '\\') {
+            unsigned char c = (unsigned char)*in;
+            if (c == '\"' || c == '\\') {
                 if (left < 2) break;
                 *o++ = '\\'; *o++ = *in++; left -= 2;
+            } else if (c < 0x20) {
+                if (left < 6) break;
+                snprintf(o, 7, "\\u%04x", c);
+                o += 6; left -= 6; in++;
             } else {
                 *o++ = *in++; left--;
             }
