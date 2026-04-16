@@ -7,7 +7,7 @@ idf_component_register(
     "imu_task.c"
     "i2c_bus.c"
     "expander.c"
-    "level_bubble.c"
+
     "ds_digit_36.c"
     "main_ui_bg.c"
     "splash_screen.c"
