@@ -51,6 +51,7 @@
 #include "lvgl_port.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
+#include "esp_random.h"
 
 /* ---------------- logging ---------------- */
 static const char *TAG = "wifi_mgr";
@@ -238,6 +239,7 @@ static esp_netif_t *s_netif_ap  = NULL;
 
 static httpd_handle_t s_httpd = NULL;
 static bool s_http_started = false;
+static char s_csrf_token[17] = {0};  // 16 hex chars, generated at server start
 static dns_server_handle_t s_dns = NULL;
 
 static bool s_have_creds = false;
@@ -904,6 +906,14 @@ static esp_err_t http_root_get(httpd_req_t *req)
         "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
     );
     send_chunk(req, "<link rel='icon' type='image/png' href='/favicon.png'/>");
+    send_chunkf(req,
+        "<script>var _csrf='%s';"
+        "document.addEventListener('DOMContentLoaded',function(){"
+        "var t=document.createElement('input');"
+        "t.type='hidden';t.name='csrf_token';t.value=_csrf;"
+        "document.querySelectorAll('form').forEach(function(f){f.appendChild(t.cloneNode(true));});"
+        "});</script>",
+        s_csrf_token);
     send_chunk(req,
         "<title>Leveler Setup Portal</title>"
         "<style>"
@@ -1004,6 +1014,14 @@ static esp_err_t http_scan_json_get(httpd_req_t *req)
  * HTTP: /save (POST)
  * ========================================================= */
 // Save Wi-Fi credentials and reboot.
+/* Validate CSRF token from a URL-encoded POST body. */
+static bool csrf_ok(const char *body)
+{
+    char tok[17] = {0};
+    if (!form_get_value(body, "csrf_token", tok, sizeof(tok))) return false;
+    return (strcmp(tok, s_csrf_token) == 0);
+}
+
 static esp_err_t http_save_post(httpd_req_t *req)
 {
     int total = req->content_len;
@@ -1029,6 +1047,12 @@ static esp_err_t http_save_post(httpd_req_t *req)
         received += r;
     }
     body[received] = 0;
+
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
 
     char ssid[33] = {0};
     char pass[65] = {0};
@@ -1085,6 +1109,12 @@ static esp_err_t http_mqtt_save_post(httpd_req_t *req)
         received += r;
     }
     body[received] = 0;
+
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
 
     char uri[128] = {0};
     char user[64] = {0};
@@ -1169,6 +1199,12 @@ static esp_err_t http_config_save_post(httpd_req_t *req)
     }
     body[received] = 0;
 
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
+
     char wheelbase_in[16] = {0};
     char trackwidth_in[16] = {0};
     char wheelbase_norm[16] = {0};
@@ -1246,6 +1282,12 @@ static esp_err_t http_network_save_post(httpd_req_t *req)
         received += r;
     }
     body[received] = 0;
+
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
 
     char host[33] = {0};
     char ip_in[16] = {0};
@@ -1328,6 +1370,12 @@ static esp_err_t http_display_save_post(httpd_req_t *req)
         received += r;
     }
     body[received] = 0;
+
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
 
     char timeout_s_str[16] = {0};
     (void)form_get_value(body, "screen_timeout_s", timeout_s_str, sizeof(timeout_s_str));
@@ -1510,6 +1558,15 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
     );
     send_chunk(req, "<link rel='icon' type='image/png' href='/favicon.png'/>");
+    // CSRF: embed token as JS var; auto-inject hidden field into every form on load.
+    send_chunkf(req,
+        "<script>var _csrf='%s';"
+        "document.addEventListener('DOMContentLoaded',function(){"
+        "var t=document.createElement('input');"
+        "t.type='hidden';t.name='csrf_token';t.value=_csrf;"
+        "document.querySelectorAll('form').forEach(function(f){f.appendChild(t.cloneNode(true));});"
+        "});</script>",
+        s_csrf_token);
     send_chunk(req,
         "<title>Leveler Dashboard</title>"
         "<style>"
@@ -1798,6 +1855,7 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "var xhr=new XMLHttpRequest();"
         "xhr.open('POST','/ota');"
         "xhr.setRequestHeader('Content-Type','application/octet-stream');"
+        "xhr.setRequestHeader('X-CSRF-Token',_csrf);"
         "xhr.upload.onprogress=function(e){"
         "if(e.lengthComputable){"
         "var p=Math.round(e.loaded/e.total*100);"
@@ -1856,14 +1914,36 @@ static esp_err_t http_favicon_get(httpd_req_t *req)
  * ========================================================= */
 static esp_err_t http_reset_post(httpd_req_t *req)
 {
-    (void)req;
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_sendstr(req, "<html><body><h3>Resetting…</h3><p>Rebooting…</p></body></html>");
+    // Read body to extract and validate CSRF token.
+    int total = req->content_len;
+    if (total > 0 && total <= 256) {
+        char *body = calloc(1, (size_t)total + 1);
+        if (body) {
+            int received = 0;
+            while (received < total) {
+                int r = httpd_req_recv(req, body + received, total - received);
+                if (r <= 0) { free(body); goto csrf_fail; }
+                received += r;
+            }
+            body[received] = 0;
+            bool ok = csrf_ok(body);
+            free(body);
+            if (!ok) goto csrf_fail;
+        }
+    } else if (total != 0) {
+        goto csrf_fail;
+    }
 
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_sendstr(req, "<html><body><h3>Resetting...</h3><p>Rebooting...</p></body></html>");
     nvs_factory_reset();
 
     vTaskDelay(pdMS_TO_TICKS(250));
     esp_restart();
+    return ESP_OK;
+
+csrf_fail:
+    httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
     return ESP_OK;
 }
 
@@ -1874,6 +1954,14 @@ static esp_err_t http_reset_post(httpd_req_t *req)
 
 static esp_err_t http_ota_post(httpd_req_t *req)
 {
+    // Validate CSRF token from X-CSRF-Token header (body is raw binary, not form data).
+    char csrf_hdr[17] = {0};
+    httpd_req_get_hdr_value_str(req, "X-CSRF-Token", csrf_hdr, sizeof(csrf_hdr));
+    if (strcmp(csrf_hdr, s_csrf_token) != 0) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_FAIL;
+    }
+
     int content_len = req->content_len;
     if (content_len <= 0 || content_len > 5 * 1024 * 1024) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
@@ -1956,6 +2044,14 @@ static httpd_handle_t start_http_server(void)
     cfg.max_uri_handlers = 22;
     cfg.stack_size = 8192;  // extra headroom for OTA flash writes
     cfg.uri_match_fn = httpd_uri_match_wildcard;
+
+    // Generate a fresh CSRF token for this server lifetime.
+    uint8_t rand_bytes[8];
+    esp_fill_random(rand_bytes, sizeof(rand_bytes));
+    snprintf(s_csrf_token, sizeof(s_csrf_token),
+             "%02x%02x%02x%02x%02x%02x%02x%02x",
+             rand_bytes[0], rand_bytes[1], rand_bytes[2], rand_bytes[3],
+             rand_bytes[4], rand_bytes[5], rand_bytes[6], rand_bytes[7]);
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) return NULL;
