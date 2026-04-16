@@ -49,6 +49,8 @@
 #include "imu_task.h"
 #include "dns_server.h"
 #include "lvgl_port.h"
+#include "esp_ota_ops.h"
+#include "esp_app_format.h"
 
 /* ---------------- logging ---------------- */
 static const char *TAG = "wifi_mgr";
@@ -1752,6 +1754,28 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<p class='muted' style='margin-top:10px'>"
         "JSON endpoint: <a href='/status.json'>/status.json</a>"
         "</p>"
+    );
+
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *next    = esp_ota_get_next_update_partition(NULL);
+    send_chunkf(req,
+        "<p class='muted'>Firmware: v%s &nbsp;|&nbsp; Built: %s %s</p>"
+        "<p class='muted'>Running: %s &nbsp;&rarr;&nbsp; OTA target: %s</p>",
+        app_desc->version, app_desc->date, app_desc->time,
+        running ? running->label : "?",
+        next    ? next->label    : "none"
+    );
+    send_chunk(req,
+        "<details><summary>Firmware Update (OTA)</summary>"
+        "<p class='muted' style='margin-top:8px'>Select the compiled <code>.bin</code> and press Upload.</p>"
+        "<label>Firmware binary (.bin)</label>"
+        "<input type='file' id='otaFile' accept='.bin'>"
+        "<div id='otaBar' style='display:none;height:8px;background:#eee;border-radius:4px;margin:8px 0'>"
+        "<div id='otaFill' style='height:100%;width:0;background:#111;border-radius:4px;transition:width .3s'></div></div>"
+        "<p id='otaStatus' class='muted'></p>"
+        "<button type='button' onclick='doOta()'>Upload &amp; Flash</button>"
+        "</details>"
         "<form method='POST' action='/reset' "
         "onsubmit=\"return confirm('Factory reset? This clears Wi-Fi + offsets and reboots.');\">"
         "<button class='danger' type='submit'>Factory Reset</button>"
@@ -1759,6 +1783,30 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<p class='muted' style='margin-top:10px'>Setup portal: <a href='/'>/</a></p>"
         "</details>"
         "<script>"
+        "function doOta(){"
+        "var f=document.getElementById('otaFile').files[0];"
+        "if(!f){alert('Select a .bin file first');return;}"
+        "var bar=document.getElementById('otaBar');"
+        "var fill=document.getElementById('otaFill');"
+        "var st=document.getElementById('otaStatus');"
+        "bar.style.display='block';st.textContent='Uploading\u2026';"
+        "var xhr=new XMLHttpRequest();"
+        "xhr.open('POST','/ota');"
+        "xhr.setRequestHeader('Content-Type','application/octet-stream');"
+        "xhr.upload.onprogress=function(e){"
+        "if(e.lengthComputable){"
+        "var p=Math.round(e.loaded/e.total*100);"
+        "fill.style.width=p+'%';"
+        "st.textContent='Uploading: '+p+'%';"
+        "}};"
+        "xhr.onload=function(){"
+        "if(xhr.status===200){"
+        "fill.style.width='100%';"
+        "st.textContent='Done! Device rebooting\u2026';"
+        "}else{st.textContent='Error: '+xhr.responseText;bar.style.display='none';}"
+        "};"
+        "xhr.onerror=function(){st.textContent='Upload failed (network error)';bar.style.display='none';};"
+        "xhr.send(f);}"
         "const dhcp=document.getElementById('dhcpToggle');"
         "const sf=document.getElementById('staticFields');"
         "const refreshStatic=()=>{ if(sf) sf.style.display=(dhcp&&dhcp.checked)?'none':'block'; };"
@@ -1815,15 +1863,94 @@ static esp_err_t http_reset_post(httpd_req_t *req)
 }
 
 /* =========================================================
+ * HTTP: /ota (POST) — stream firmware binary directly into OTA partition
+ * ========================================================= */
+#define OTA_BUF_SIZE 4096
+
+static esp_err_t http_ota_post(httpd_req_t *req)
+{
+    int content_len = req->content_len;
+    if (content_len <= 0 || content_len > 5 * 1024 * 1024) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
+        return ESP_FAIL;
+    }
+
+    const esp_partition_t *update_part = esp_ota_get_next_update_partition(NULL);
+    if (!update_part) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition found");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "OTA: writing %d bytes to partition '%s'", content_len, update_part->label);
+
+    esp_ota_handle_t ota_handle = 0;
+    esp_err_t err = esp_ota_begin(update_part, OTA_SIZE_UNKNOWN, &ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA begin failed");
+        return ESP_FAIL;
+    }
+
+    char *buf = malloc(OTA_BUF_SIZE);
+    if (!buf) {
+        esp_ota_abort(ota_handle);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No memory");
+        return ESP_FAIL;
+    }
+
+    int received = 0;
+    while (received < content_len) {
+        int to_read = content_len - received;
+        if (to_read > OTA_BUF_SIZE) to_read = OTA_BUF_SIZE;
+        int r = httpd_req_recv(req, buf, to_read);
+        if (r <= 0) {
+            free(buf);
+            esp_ota_abort(ota_handle);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
+            return ESP_FAIL;
+        }
+        err = esp_ota_write(ota_handle, buf, r);
+        if (err != ESP_OK) {
+            free(buf);
+            esp_ota_abort(ota_handle);
+            ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA write failed");
+            return ESP_FAIL;
+        }
+        received += r;
+    }
+    free(buf);
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA verify failed");
+        return ESP_FAIL;
+    }
+
+    err = esp_ota_set_boot_partition(update_part);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Set boot partition failed");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "OTA complete — rebooting into new firmware");
+    httpd_resp_sendstr(req, "OK");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+    return ESP_OK;
+}
+
+/* =========================================================
  * HTTP server start / ensure
  * ========================================================= */
 // HTTP server: setup UI, status UI, and endpoints.
 static httpd_handle_t start_http_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 20;
+    cfg.max_uri_handlers = 22;
+    cfg.stack_size = 8192;  // extra headroom for OTA flash writes
     cfg.uri_match_fn = httpd_uri_match_wildcard;
-    // Keep defaults for stack/priority unless you need to tune.
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) return NULL;
@@ -1920,6 +2047,14 @@ static httpd_handle_t start_http_server(void)
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &reset);
+
+    httpd_uri_t ota = {
+        .uri = "/ota",
+        .method = HTTP_POST,
+        .handler = http_ota_post,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &ota);
 
     // Captive portal detection endpoints -> redirect to "/"
     httpd_uri_t cp_generate = {

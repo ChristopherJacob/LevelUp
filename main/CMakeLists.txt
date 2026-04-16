@@ -35,4 +35,5 @@ idf_component_register(
     mqtt
     dns_server
     esp_codec_dev
+    app_update
 )
