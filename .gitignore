@@ -2,7 +2,7 @@
 build/
 build/**
 bootloader/build/
-.vscode/
+# .vscode/ intentionally tracked
 .idea/
 .cache/
 
