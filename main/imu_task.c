@@ -152,6 +152,7 @@ static void imu_task(void *arg)
     if (!bus) {
         ESP_LOGE(TAG, "I2C bus handle is NULL");
         vTaskDelete(NULL);
+        return;
     }
 
     qmi8658_dev_t dev = {0};
