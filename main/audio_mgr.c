@@ -207,7 +207,10 @@ esp_err_t audio_mgr_init(void)
     audio_build_beep_buffer();
     ESP_RETURN_ON_ERROR(audio_i2s_init(), TAG, "audio i2s init failed");
     ESP_RETURN_ON_ERROR(audio_codec_init(), TAG, "audio codec init failed");
-    xTaskCreate(audio_beep_task, "audio_beep", 4096, NULL, 4, NULL);
+    if (xTaskCreate(audio_beep_task, "audio_beep", 4096, NULL, 4, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create audio_beep task");
+        return ESP_ERR_NO_MEM;
+    }
     s_init_done = true;
     ESP_LOGI(TAG, "audio init OK");
     return ESP_OK;

@@ -369,7 +369,10 @@ esp_err_t lvgl_port_init(void)
     ESP_RETURN_ON_ERROR(esp_timer_create(&tick_args, &tick_timer), TAG, "esp_timer_create failed");
     ESP_RETURN_ON_ERROR(esp_timer_start_periodic(tick_timer, LVGL_TICK_PERIOD_MS * 1000), TAG, "start tick failed");
 
-    xTaskCreate(lvgl_task, "lvgl", LVGL_TASK_STACK_SIZE, NULL, LVGL_TASK_PRIORITY, NULL);
+    if (xTaskCreate(lvgl_task, "lvgl", LVGL_TASK_STACK_SIZE, NULL, LVGL_TASK_PRIORITY, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create lvgl task");
+        return ESP_ERR_NO_MEM;
+    }
 
     i2c_master_bus_handle_t bus = i2c_bus_get_handle();
     if (!bus) {

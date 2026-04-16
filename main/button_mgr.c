@@ -213,7 +213,10 @@ esp_err_t button_mgr_init(void)
     }
 
     // Give this task enough headroom for UI callbacks and logging.
-    xTaskCreate(button_task, "button_task", 6144, NULL, 3, NULL);
+    if (xTaskCreate(button_task, "button_task", 6144, NULL, 3, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create button_task");
+        return ESP_ERR_NO_MEM;
+    }
     s_started = true;
     return ESP_OK;
 }

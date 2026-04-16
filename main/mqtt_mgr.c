@@ -407,7 +407,10 @@ esp_err_t mqtt_mgr_init(void)
 
     mqtt_mgr_load_config();
     if (!s_task_started) {
-        xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, NULL);
+        if (xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "failed to create mqtt_pub task");
+            return ESP_ERR_NO_MEM;
+        }
         s_task_started = true;
     }
 
@@ -431,7 +434,10 @@ esp_err_t mqtt_mgr_restart(void)
     }
 
     if (!s_task_started) {
-        xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, NULL);
+        if (xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "failed to create mqtt_pub task");
+            return ESP_ERR_NO_MEM;
+        }
         s_task_started = true;
     }
 
