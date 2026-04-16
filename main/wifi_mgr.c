@@ -894,7 +894,7 @@ static esp_err_t http_root_get(httpd_req_t *req)
     if (s_have_creds && !s_running_ap) {
         return http_status_get(req);
     }
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
 
     // Simple single page:
     // - button to scan (AJAX) -> populates select
@@ -1043,7 +1043,7 @@ static esp_err_t http_save_post(httpd_req_t *req)
         return ESP_OK;
     }
 
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<html><body><h3>Saved!</h3><p>Rebooting...</p></body></html>");
 
     vTaskDelay(pdMS_TO_TICKS(250));
@@ -1129,7 +1129,7 @@ static esp_err_t http_mqtt_save_post(httpd_req_t *req)
     ESP_LOGI(TAG, "Restarting MQTT after config save");
     mqtt_mgr_restart();
 
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<html><body><h3>Saved!</h3><p>Restarting MQTT...</p><p><a href='/status'>Back to status</a></p></body></html>");
     return ESP_OK;
 }
@@ -1207,7 +1207,7 @@ static esp_err_t http_config_save_post(httpd_req_t *req)
         safe_strcpy(s_hostname, sizeof(s_hostname), "levelup");
     }
 
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<html><body><h3>Saved!</h3><p><a href='/status'>Back to status</a></p></body></html>");
     return ESP_OK;
 }
@@ -1287,7 +1287,7 @@ static esp_err_t http_network_save_post(httpd_req_t *req)
     safe_strcpy(s_sta_gw, sizeof(s_sta_gw), gw_norm);
     safe_strcpy(s_sta_nm, sizeof(s_sta_nm), nm_norm);
 
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<html><body><h3>Saved!</h3><p>Rebooting to apply network settings...</p></body></html>");
     vTaskDelay(pdMS_TO_TICKS(250));
     esp_restart();
@@ -1339,7 +1339,7 @@ static esp_err_t http_display_save_post(httpd_req_t *req)
     s_screen_timeout_s = timeout_s;
     lvgl_port_set_screen_timeout_ms(s_screen_timeout_s * 1000U);
 
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<html><body><h3>Saved!</h3><p><a href='/status'>Back to status</a></p></body></html>");
     return ESP_OK;
 }
@@ -1441,7 +1441,7 @@ static esp_err_t http_status_json_get(httpd_req_t *req)
 // Status HTML page with config forms.
 static esp_err_t http_status_get(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 
     float roll, pitch, ax, ay, az;
@@ -1789,7 +1789,7 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "var bar=document.getElementById('otaBar');"
         "var fill=document.getElementById('otaFill');"
         "var st=document.getElementById('otaStatus');"
-        "bar.style.display='block';st.textContent='Uploading\u2026';"
+        "bar.style.display='block';st.textContent='Uploading...';"
         "var xhr=new XMLHttpRequest();"
         "xhr.open('POST','/ota');"
         "xhr.setRequestHeader('Content-Type','application/octet-stream');"
@@ -1802,7 +1802,7 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "xhr.onload=function(){"
         "if(xhr.status===200){"
         "fill.style.width='100%';"
-        "st.textContent='Done! Device rebooting\u2026';"
+        "st.textContent='Done! Device rebooting...';"
         "}else{st.textContent='Error: '+xhr.responseText;bar.style.display='none';}"
         "};"
         "xhr.onerror=function(){st.textContent='Upload failed (network error)';bar.style.display='none';};"
@@ -1852,7 +1852,7 @@ static esp_err_t http_favicon_get(httpd_req_t *req)
 static esp_err_t http_reset_post(httpd_req_t *req)
 {
     (void)req;
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<html><body><h3>Resetting…</h3><p>Rebooting…</p></body></html>");
 
     nvs_factory_reset();
