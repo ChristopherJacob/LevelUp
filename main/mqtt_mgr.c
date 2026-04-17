@@ -325,7 +325,7 @@ static void mqtt_mgr_publish_state(void)
                        "}",
                        roll, pitch, roll_in, pitch_in, ax, ay, az, rssi, ipbuf);
     if (len > 0) {
-        esp_mqtt_client_publish(s_client, s_state_topic, payload, 0, 1, 0);
+        esp_mqtt_client_publish(s_client, s_state_topic, payload, 0, 1, 1);
     }
 }
 
