@@ -50,7 +50,7 @@ static bool read_pwr_pressed(void)
     esp_io_expander_handle_t ex = expander_get_handle();
     if (!ex) return false;
 
-    if (!i2c_bus_lock(10)) return false;
+    if (!i2c_bus_lock(50)) return false;
     uint32_t level = 0;
     esp_err_t err = esp_io_expander_get_level(ex, BTN_PWR_EXIO_MASK, &level);
     i2c_bus_unlock();

@@ -29,7 +29,7 @@ static const char *TAG = "mqtt_mgr";
 
 static EventGroupHandle_t s_mqtt_events;
 static esp_mqtt_client_handle_t s_client;
-static bool s_task_started = false;
+static TaskHandle_t s_pub_task = NULL;
 
 static portMUX_TYPE s_angle_mux = portMUX_INITIALIZER_UNLOCKED;
 static float s_last_roll = 0.0f;
@@ -258,12 +258,15 @@ static void mqtt_mgr_publish_state(void)
     float roll;
     float pitch;
     float ax, ay, az;
+    float trackwidth_in, wheelbase_in;
     portENTER_CRITICAL(&s_angle_mux);
     roll = s_last_roll;
     pitch = s_last_pitch;
     ax = s_last_ax;
     ay = s_last_ay;
     az = s_last_az;
+    trackwidth_in = s_trackwidth_in;
+    wheelbase_in  = s_wheelbase_in;
     portEXIT_CRITICAL(&s_angle_mux);
 
     int rssi = 0;
@@ -272,8 +275,8 @@ static void mqtt_mgr_publish_state(void)
         rssi = ap.rssi;
     }
 
-    float roll_in = tanf(roll * DEG2RAD) * s_trackwidth_in;
-    float pitch_in = tanf(pitch * DEG2RAD) * s_wheelbase_in;
+    float roll_in = tanf(roll * DEG2RAD) * trackwidth_in;
+    float pitch_in = tanf(pitch * DEG2RAD) * wheelbase_in;
 
     char ipbuf[16] = "";
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -300,7 +303,7 @@ static void mqtt_mgr_publish_state(void)
                        "}",
                        roll, pitch, roll_in, pitch_in, ax, ay, az, rssi, ipbuf);
     if (len > 0) {
-        esp_mqtt_client_publish(s_client, s_state_topic, payload, 0, 0, 0);
+        esp_mqtt_client_publish(s_client, s_state_topic, payload, 0, 1, 0);
     }
 }
 
@@ -406,12 +409,11 @@ esp_err_t mqtt_mgr_init(void)
     }
 
     mqtt_mgr_load_config();
-    if (!s_task_started) {
-        if (xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, NULL) != pdPASS) {
+    if (!s_pub_task) {
+        if (xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, &s_pub_task) != pdPASS) {
             ESP_LOGE(TAG, "failed to create mqtt_pub task");
             return ESP_ERR_NO_MEM;
         }
-        s_task_started = true;
     }
 
     ESP_RETURN_ON_ERROR(mqtt_mgr_start_client(), TAG, "mqtt start failed");
@@ -433,12 +435,11 @@ esp_err_t mqtt_mgr_restart(void)
         if (!s_mqtt_events) return ESP_ERR_NO_MEM;
     }
 
-    if (!s_task_started) {
-        if (xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, NULL) != pdPASS) {
+    if (!s_pub_task) {
+        if (xTaskCreate(mqtt_mgr_task, "mqtt_pub", 4096, NULL, 5, &s_pub_task) != pdPASS) {
             ESP_LOGE(TAG, "failed to create mqtt_pub task");
             return ESP_ERR_NO_MEM;
         }
-        s_task_started = true;
     }
 
     mqtt_mgr_stop_client();

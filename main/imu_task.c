@@ -212,6 +212,8 @@ static void imu_task(void *arg)
                 i2c_bus_unlock();
             } else {
                 err = ESP_ERR_TIMEOUT;
+                consecutive_errs++;
+                ESP_LOGW(TAG, "i2c lock timeout reading sensor [%d]", consecutive_errs);
             }
 
             if (err == ESP_OK) {

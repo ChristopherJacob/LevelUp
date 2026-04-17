@@ -29,7 +29,7 @@ static const char *TAG = "lvgl_port";
 #define LVGL_TASK_MAX_DELAY_MS   500
 #define LVGL_TASK_MIN_DELAY_MS     1
 #define LVGL_TASK_STACK_SIZE    (6 * 1024)
-#define LVGL_TASK_PRIORITY         2
+#define LVGL_TASK_PRIORITY         5
 // Default auto-blank timeout for the AMOLED after inactivity.
 #define SCREEN_TIMEOUT_DEFAULT_MS      (60 * 1000)
 
@@ -121,9 +121,11 @@ static void lvgl_task(void *arg)
             }
         }
 
-        if (lvgl_port_lock(-1)) {
+        if (lvgl_port_lock(100)) {
             delay_ms = lv_timer_handler();
             lvgl_port_unlock();
+        } else {
+            ESP_LOGW(TAG, "lvgl lock timeout, skipping frame");
         }
 
         if (delay_ms > LVGL_TASK_MAX_DELAY_MS) delay_ms = LVGL_TASK_MAX_DELAY_MS;
