@@ -47,6 +47,9 @@ static char s_discovery_pitch_topic[128];
 static char s_discovery_rssi_topic[128];
 static char s_discovery_roll_in_topic[128];
 static char s_discovery_pitch_in_topic[128];
+static char s_discovery_accel_x_topic[128];
+static char s_discovery_accel_y_topic[128];
+static char s_discovery_accel_z_topic[128];
 
 static float s_wheelbase_in = 133.0f;
 static float s_trackwidth_in = 65.2f;
@@ -125,125 +128,143 @@ static void mqtt_mgr_build_topics(void)
              "%s/sensor/%s/roll_in/config", s_mqtt_disc, s_device_id);
     snprintf(s_discovery_pitch_in_topic, sizeof(s_discovery_pitch_in_topic),
              "%s/sensor/%s/pitch_in/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_accel_x_topic, sizeof(s_discovery_accel_x_topic),
+             "%s/sensor/%s/accel_x/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_accel_y_topic, sizeof(s_discovery_accel_y_topic),
+             "%s/sensor/%s/accel_y/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_accel_z_topic, sizeof(s_discovery_accel_z_topic),
+             "%s/sensor/%s/accel_z/config", s_mqtt_disc, s_device_id);
 }
 
-// Publish Home Assistant discovery payloads (retained).
+// Publish a single HA MQTT discovery config entry (retained QoS-1).
+// opt: optional extra JSON fields, each starting with a comma (e.g. ",\"icon\":\"mdi:wifi\"").
+// dev_block: the full "device":{...} JSON object string.
+static void mqtt_pub_disc_entity(const char *config_topic,
+                                 const char *name,
+                                 const char *uniq_suffix,
+                                 const char *value_key,
+                                 const char *unit,
+                                 const char *opt,
+                                 const char *dev_block)
+{
+    char payload[768];
+    int len = snprintf(payload, sizeof(payload),
+        "{"
+        "\"name\":\"%s\","
+        "\"uniq_id\":\"%s_%s\","
+        "\"state_topic\":\"%s\","
+        "\"availability_topic\":\"%s\","
+        "\"payload_available\":\"online\","
+        "\"payload_not_available\":\"offline\","
+        "\"value_template\":\"{{ value_json.%s }}\","
+        "\"unit_of_measurement\":\"%s\","
+        "\"state_class\":\"measurement\""
+        "%s,"   // optional fields (each prefixed with ,)
+        "%s"    // device block
+        "}",
+        name,
+        s_device_id, uniq_suffix,
+        s_state_topic,
+        s_availability_topic,
+        value_key,
+        unit,
+        opt,
+        dev_block);
+    if (len > 0 && len < (int)sizeof(payload)) {
+        esp_mqtt_client_publish(s_client, config_topic, payload, 0, 1, 1);
+    } else {
+        ESP_LOGW(TAG, "discovery payload overflow for '%s' (%d bytes)", name, len);
+    }
+}
+
+// Publish Home Assistant MQTT discovery payloads (retained, QoS 1).
+// Entities appear automatically in HA without manual YAML config.
 static void mqtt_mgr_publish_discovery(void)
 {
-    if (!s_client) {
-        return;
-    }
-    char payload[512];
+    if (!s_client) return;
 
-    int len = snprintf(payload, sizeof(payload),
-                       "{"
-                       "\"name\":\"LevelUp Roll\","
-                       "\"uniq_id\":\"%s_roll\","
-                       "\"state_topic\":\"%s\","
-                       "\"value_template\":\"{{ value_json.roll_deg }}\","
-                       "\"unit_of_measurement\":\"°\","
-                       "\"availability_topic\":\"%s\","
-                       "\"payload_available\":\"online\","
-                       "\"payload_not_available\":\"offline\","
-                       "\"device\":{"
-                       "\"identifiers\":[\"%s\"],"
-                       "\"name\":\"LevelUp\","
-                       "\"manufacturer\":\"LevelUp\","
-                       "\"model\":\"ESP32\""
-                       "}"
-                       "}",
-                       s_device_id, s_state_topic, s_availability_topic, s_device_id);
-    if (len > 0) {
-        esp_mqtt_client_publish(s_client, s_discovery_roll_topic, payload, 0, 1, 1);
+    // Build configuration_url from current IP (best-effort, omitted if not connected).
+    char ipbuf[16] = "";
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif) {
+        esp_netif_ip_info_t ip_info = {0};
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+            snprintf(ipbuf, sizeof(ipbuf), IPSTR, IP2STR(&ip_info.ip));
+        }
     }
 
-    len = snprintf(payload, sizeof(payload),
-                   "{"
-                   "\"name\":\"LevelUp Pitch\","
-                   "\"uniq_id\":\"%s_pitch\","
-                   "\"state_topic\":\"%s\","
-                   "\"value_template\":\"{{ value_json.pitch_deg }}\","
-                   "\"unit_of_measurement\":\"°\","
-                   "\"availability_topic\":\"%s\","
-                   "\"payload_available\":\"online\","
-                   "\"payload_not_available\":\"offline\","
-                   "\"device\":{"
-                   "\"identifiers\":[\"%s\"],"
-                   "\"name\":\"LevelUp\","
-                   "\"manufacturer\":\"LevelUp\","
-                   "\"model\":\"ESP32\""
-                   "}"
-                   "}",
-                   s_device_id, s_state_topic, s_availability_topic, s_device_id);
-    if (len > 0) {
-        esp_mqtt_client_publish(s_client, s_discovery_pitch_topic, payload, 0, 1, 1);
+    // Shared device block — identical for every entity so HA groups them.
+    char dev[256];
+    if (ipbuf[0]) {
+        snprintf(dev, sizeof(dev),
+            "\"device\":{"
+            "\"identifiers\":[\"%s\"],"
+            "\"name\":\"LevelUp\","
+            "\"manufacturer\":\"LevelUp\","
+            "\"model\":\"ESP32-S3 AMOLED\","
+            "\"configuration_url\":\"http://%s\""
+            "}",
+            s_device_id, ipbuf);
+    } else {
+        snprintf(dev, sizeof(dev),
+            "\"device\":{"
+            "\"identifiers\":[\"%s\"],"
+            "\"name\":\"LevelUp\","
+            "\"manufacturer\":\"LevelUp\","
+            "\"model\":\"ESP32-S3 AMOLED\""
+            "}",
+            s_device_id);
     }
 
-    len = snprintf(payload, sizeof(payload),
-                   "{"
-                   "\"name\":\"LevelUp RSSI\","
-                   "\"uniq_id\":\"%s_rssi\","
-                   "\"state_topic\":\"%s\","
-                   "\"value_template\":\"{{ value_json.rssi }}\","
-                   "\"unit_of_measurement\":\"dBm\","
-                   "\"availability_topic\":\"%s\","
-                   "\"payload_available\":\"online\","
-                   "\"payload_not_available\":\"offline\","
-                   "\"device\":{"
-                   "\"identifiers\":[\"%s\"],"
-                   "\"name\":\"LevelUp\","
-                   "\"manufacturer\":\"LevelUp\","
-                   "\"model\":\"ESP32\""
-                   "}"
-                   "}",
-                   s_device_id, s_state_topic, s_availability_topic, s_device_id);
-    if (len > 0) {
-        esp_mqtt_client_publish(s_client, s_discovery_rssi_topic, payload, 0, 1, 1);
-    }
+    // Primary leveling sensors.
+    mqtt_pub_disc_entity(s_discovery_roll_topic,    "LevelUp Roll",       "roll",
+                         "roll_deg",  "\xc2\xb0",
+                         ",\"icon\":\"mdi:axis-z-rotate-clockwise\","
+                         "\"suggested_display_precision\":2",
+                         dev);
+    mqtt_pub_disc_entity(s_discovery_pitch_topic,   "LevelUp Pitch",      "pitch",
+                         "pitch_deg", "\xc2\xb0",
+                         ",\"icon\":\"mdi:axis-x-rotate-clockwise\","
+                         "\"suggested_display_precision\":2",
+                         dev);
+    mqtt_pub_disc_entity(s_discovery_roll_in_topic, "LevelUp Roll (in)",  "roll_in",
+                         "roll_in",   "in",
+                         ",\"icon\":\"mdi:ruler\","
+                         "\"suggested_display_precision\":1",
+                         dev);
+    mqtt_pub_disc_entity(s_discovery_pitch_in_topic,"LevelUp Pitch (in)", "pitch_in",
+                         "pitch_in",  "in",
+                         ",\"icon\":\"mdi:ruler\","
+                         "\"suggested_display_precision\":1",
+                         dev);
 
-    len = snprintf(payload, sizeof(payload),
-                   "{"
-                   "\"name\":\"LevelUp Roll (in)\","
-                   "\"uniq_id\":\"%s_roll_in\","
-                   "\"state_topic\":\"%s\","
-                   "\"value_template\":\"{{ value_json.roll_in }}\","
-                   "\"unit_of_measurement\":\"in\","
-                   "\"availability_topic\":\"%s\","
-                   "\"payload_available\":\"online\","
-                   "\"payload_not_available\":\"offline\","
-                   "\"device\":{"
-                   "\"identifiers\":[\"%s\"],"
-                   "\"name\":\"LevelUp\","
-                   "\"manufacturer\":\"LevelUp\","
-                   "\"model\":\"ESP32\""
-                   "}"
-                   "}",
-                   s_device_id, s_state_topic, s_availability_topic, s_device_id);
-    if (len > 0) {
-        esp_mqtt_client_publish(s_client, s_discovery_roll_in_topic, payload, 0, 1, 1);
-    }
+    // Diagnostic sensors.
+    mqtt_pub_disc_entity(s_discovery_rssi_topic,  "LevelUp RSSI",    "rssi",
+                         "rssi", "dBm",
+                         ",\"device_class\":\"signal_strength\","
+                         "\"entity_category\":\"diagnostic\","
+                         "\"icon\":\"mdi:wifi\"",
+                         dev);
+    mqtt_pub_disc_entity(s_discovery_accel_x_topic, "LevelUp Accel X", "accel_x",
+                         "accel_x", "g",
+                         ",\"entity_category\":\"diagnostic\","
+                         "\"icon\":\"mdi:axis-x-arrow\","
+                         "\"suggested_display_precision\":3",
+                         dev);
+    mqtt_pub_disc_entity(s_discovery_accel_y_topic, "LevelUp Accel Y", "accel_y",
+                         "accel_y", "g",
+                         ",\"entity_category\":\"diagnostic\","
+                         "\"icon\":\"mdi:axis-y-arrow\","
+                         "\"suggested_display_precision\":3",
+                         dev);
+    mqtt_pub_disc_entity(s_discovery_accel_z_topic, "LevelUp Accel Z", "accel_z",
+                         "accel_z", "g",
+                         ",\"entity_category\":\"diagnostic\","
+                         "\"icon\":\"mdi:axis-z-arrow\","
+                         "\"suggested_display_precision\":3",
+                         dev);
 
-    len = snprintf(payload, sizeof(payload),
-                   "{"
-                   "\"name\":\"LevelUp Pitch (in)\","
-                   "\"uniq_id\":\"%s_pitch_in\","
-                   "\"state_topic\":\"%s\","
-                   "\"value_template\":\"{{ value_json.pitch_in }}\","
-                   "\"unit_of_measurement\":\"in\","
-                   "\"availability_topic\":\"%s\","
-                   "\"payload_available\":\"online\","
-                   "\"payload_not_available\":\"offline\","
-                   "\"device\":{"
-                   "\"identifiers\":[\"%s\"],"
-                   "\"name\":\"LevelUp\","
-                   "\"manufacturer\":\"LevelUp\","
-                   "\"model\":\"ESP32\""
-                   "}"
-                   "}",
-                   s_device_id, s_state_topic, s_availability_topic, s_device_id);
-    if (len > 0) {
-        esp_mqtt_client_publish(s_client, s_discovery_pitch_in_topic, payload, 0, 1, 1);
-    }
+    ESP_LOGI(TAG, "HA discovery published (%s)", ipbuf[0] ? ipbuf : "no IP");
 }
 
 // Publish state payload at the configured rate.
