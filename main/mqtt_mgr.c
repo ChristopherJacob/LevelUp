@@ -17,6 +17,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 #include "mqtt_client.h"
 #include "nvs.h"
 

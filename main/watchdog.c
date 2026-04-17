@@ -62,7 +62,7 @@ static void watchdog_task(void *arg)
 void watchdog_start(void)
 {
     // Low priority — this task only needs to wake every few seconds.
-    if (xTaskCreate(watchdog_task, "watchdog", 2048, NULL, 1, NULL) != pdPASS) {
+    if (xTaskCreate(watchdog_task, "watchdog", 4096, NULL, 1, NULL) != pdPASS) {
         ESP_LOGE(TAG, "failed to create watchdog task");
     }
 }

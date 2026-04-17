@@ -218,7 +218,8 @@ static void nvs_load_audio_prefs(void)
 }
 
 // Save mute/volume so sound behavior survives reboot.
-static void nvs_save_audio_prefs(void)
+// Also exported as ui_save_audio_prefs() for use by HTTP wizard handler.
+void ui_save_audio_prefs(void)
 {
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
@@ -416,7 +417,7 @@ static void sound_slider_event_cb(lv_event_t *e)
     if (code == LV_EVENT_VALUE_CHANGED) {
         int vol = lv_slider_get_value(s_sound_slider);
         audio_mgr_set_volume(vol);
-        nvs_save_audio_prefs();
+        ui_save_audio_prefs();
         if (s_sound_hide_timer) lv_timer_reset(s_sound_hide_timer);
         return;
     }
@@ -466,7 +467,7 @@ void ui_toggle_mute(void)
 {
     bool will_mute = !audio_mgr_is_muted();
     audio_mgr_set_muted(will_mute);
-    nvs_save_audio_prefs();
+    ui_save_audio_prefs();
     sound_refresh_icon();
     ui_status_toast(will_mute ? "Sound off" : "Sound on", lv_color_hex(0xE9EDF2));
 }

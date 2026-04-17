@@ -52,6 +52,8 @@
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
 #include "esp_random.h"
+#include "audio_mgr.h"
+#include "ui.h"
 
 /* ---------------- logging ---------------- */
 static const char *TAG = "wifi_mgr";
@@ -271,7 +273,7 @@ static char s_mqtt_disc[32] = {0};
 static bool s_mqtt_enable = false;
 static bool s_have_mqtt = false;
 
-#define UI_VERSION "2026-04-16-1"
+#define UI_VERSION "2026-04-17-1"
 
 /* ---- In-RAM log ring buffer (captured via vprintf hook) ---- */
 #define LOG_BUF_SIZE        8192
@@ -1715,6 +1717,9 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<div class='title'>"
         "<h2>Leveler Dashboard</h2>"
         "<div class='title-right'>"
+        "<a href='/wizard' style='font-size:13px;padding:6px 12px;border:1px solid var(--border);"
+        "border-radius:8px;text-decoration:none;color:var(--text);background:var(--surface)'>"
+        "&#x2699;&#xfe0f; Setup Wizard</a>"
         "<span class='muted'>v" UI_VERSION "</span>"
         "<button id='themeBtn' type='button' aria-label='Toggle dark mode' onclick='toggleTheme()'>"
         "<span id='themeIco'></span>"
@@ -1734,6 +1739,7 @@ static esp_err_t http_status_get(httpd_req_t *req)
             "</div>",
             invalid_part->label);
     }
+
 
     send_chunk(req,
         "<div class='grid'>"
@@ -2120,13 +2126,15 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "function clearLog(){"
         "var pre=document.getElementById('logPre');"
         "if(pre)pre.textContent='';}"
-        "var _logLive=document.getElementById('logLive');"
-        "if(_logLive){"
+        /* logLive lives in a later HTML chunk — defer lookup until DOM is ready */
+        "document.addEventListener('DOMContentLoaded',function(){"
+        "var ll=document.getElementById('logLive');"
+        "if(!ll)return;"
         "function _logToggle(){"
-        "if(_logLive.checked){fetchLog();_logTimer=setInterval(fetchLog,2000);}"
+        "if(ll.checked){fetchLog();_logTimer=setInterval(fetchLog,2000);}"
         "else{clearInterval(_logTimer);_logTimer=null;}}"
-        "_logLive.addEventListener('change',_logToggle);"
-        "_logToggle();}"
+        "ll.addEventListener('change',_logToggle);"
+        "_logToggle();});"
         "</script>"
         "</details></div></div>"
     );
@@ -2365,13 +2373,663 @@ static esp_err_t http_logs_get(httpd_req_t *req)
 }
 
 /* =========================================================
+ * Calibration Wizard: embedded vehicle image (base64 JPEG, 240 px wide)
+ * ========================================================= */
+static const char s_vehicle_b64[] =
+    "/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAA"
+    "A6ABAAMAAAABAAEAAKACAAQAAAABAAAA8KADAAQAAAABAAABaAAAAAD/wAARCAFoAPADASIAAhEB"
+    "AxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9"
+    "AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6"
+    "Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ip"
+    "qrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEB"
+    "AQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJB"
+    "UQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RV"
+    "VldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6"
+    "wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9sAQwADAwMDAwMFAwMFBwUFBQcJ"
+    "BwcHBwkMCQkJCQkMDgwMDAwMDA4ODg4ODg4OERERERERFBQUFBQWFhYWFhYWFhYW/9sAQwEDBAQG"
+    "BQYKBQUKFxANEBcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcX"
+    "FxcX/90ABAAP/9oADAMBAAIRAxEAPwD9UqKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigA"
+    "ooooAKKKKACiiigAooooAKKKKACiiigAooooA//Q/VKiiigAooooAKKKKACiiigAqOWeGHb5zqm9"
+    "gi7iBuY9AM9SfSvkj48ftS2Pwz1KTwf4Sto9T12JV+0SSljbWjSAFEZU+eWZgQRGpGARlgSAfhL4"
+    "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"
+    "3rGb8FzQBzoQUuyt0+H9dHP2Gf8A74NB0DXAP+PCf/vg0DPLPGPw78F/EC2htfF+mx36WzFoizMj"
+    "oWxna6MrAHAyM4OBTvB3w88G+ALWaz8IadHYR3Lh5SpZ2cqMDczszEDJwM4GT616d/wj2uHrYz/9"
+    "8Gl/4R7XMf8AHjP/AN8GgDEVKdsGK2x4f1z/AJ8Z/wDvg0v/AAj+uf8APjP/AN8GgDECVMiAGtlP"
+    "DuvMwC2E3PqMfzrp7bwRqhH76OFf96Rv/ZaAOEVAa63w1o0+o3sblT5MTBnY9OOcD1Jr0Ox8KaPb"
+    "RL51ujy4+Yksy59gxro4444kEcShFHQKMAUCH0UUUAFFFFABRRRQAUUUUAf/0v1SooooAKKKKACi"
+    "iigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigD/9P9UqKK"
+    "KACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAoooo"
+    "A//U/VKiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigA"
+    "ooooAKKKKAP/1f1SooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACi"
+    "iigAooooAKKKKACiiigD/9k=";
+/* =========================================================
+ * HTTP: /wizard (GET) — multi-step calibration wizard
+ * ========================================================= */
+static esp_err_t http_wizard_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    int  vol   = audio_mgr_get_volume();
+    bool muted = audio_mgr_is_muted();
+
+    /* head */
+    send_chunk(req,
+        "<!DOCTYPE html><html><head>"
+        "<meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<link rel='icon' type='image/png' href='/favicon.png'>"
+        "<title>Setup Wizard \xe2\x80\x94 Leveler</title>"
+    );
+    /* early theme to prevent flash */
+    send_chunk(req,
+        "<script>(function(){"
+        "var t=localStorage.getItem('theme');"
+        "if(t==='dark'||(t==null&&window.matchMedia&&"
+        "window.matchMedia('(prefers-color-scheme:dark)').matches))"
+        "{document.documentElement.setAttribute('data-theme','dark');}"
+        "})();</script>"
+    );
+    send_chunk(req,
+        "<style>"
+        ":root{--bg:#f5f6fa;--surface:#fff;--border:#e0e1e7;--text:#1a1b1e;"
+        "--muted:#6b7280;--accent:#2563eb;--btn:#1d1d1f;--btn-text:#fff;"
+        "--ok:#16a34a;--ok-bg:#dcfce7;--err:#dc2626;--err-bg:#fee2e2;"
+        "--warn:#d97706;--warn-bg:#fef3c7}"
+        "[data-theme=dark]{--bg:#111827;--surface:#1f2937;--border:#374151;"
+        "--text:#f9fafb;--muted:#9ca3af;--accent:#60a5fa;--btn:#f3f4f6;"
+        "--btn-text:#111827;--ok:#4ade80;--ok-bg:#052e16;"
+        "--err:#f87171;--err-bg:#450a0a;--warn:#fbbf24;--warn-bg:#451a03}"
+        "body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;"
+        "background:var(--bg);color:var(--text);min-height:100vh;"
+        "display:flex;align-items:center;justify-content:center}"
+        ".wizard{max-width:460px;width:100%;margin:24px;background:var(--surface);"
+        "border:1px solid var(--border);border-radius:20px;overflow:hidden;"
+        "box-shadow:0 4px 24px rgba(0,0,0,.12)}"
+        ".wiz-head{padding:20px 24px 14px;border-bottom:1px solid var(--border)}"
+        ".wiz-head h2{margin:0 0 4px;font-size:18px;font-weight:700}"
+        ".wiz-sub{font-size:13px;color:var(--muted);margin:0}"
+        ".dots{display:flex;gap:6px;margin-top:12px}"
+        ".dot{flex:1;height:4px;border-radius:99px;background:var(--border);transition:background .3s}"
+        ".dot.done{background:var(--ok)}"
+        ".dot.active{background:var(--accent)}"
+        ".wiz-body{padding:22px 24px}"
+        ".step{display:none}"
+        ".step.active{display:block}"
+        ".desc{color:var(--muted);font-size:14px;margin:0 0 18px;line-height:1.5}"
+        ".vehicle-wrap{position:relative;margin:0 auto 18px;width:180px}"
+        ".vehicle-wrap img{width:100%;border-radius:12px;display:block;"
+        "box-shadow:0 2px 8px rgba(0,0,0,.15)}"
+        ".ax{position:absolute;font-size:10px;font-weight:800;letter-spacing:.06em;"
+        "background:var(--surface);color:var(--text);padding:2px 5px;border-radius:4px;"
+        "border:1px solid var(--border)}"
+        ".ax.top{top:-12px;left:50%;transform:translateX(-50%)}"
+        ".ax.bot{bottom:-12px;left:50%;transform:translateX(-50%)}"
+        ".ax.lft{left:-26px;top:50%;transform:translateY(-50%)}"
+        ".ax.rgt{right:-26px;top:50%;transform:translateY(-50%)}"
+        ".angle-row{display:flex;gap:10px;margin-bottom:18px}"
+        ".abox{flex:1;padding:12px 10px;border:1px solid var(--border);"
+        "border-radius:12px;text-align:center;transition:border-color .3s,background .3s}"
+        ".abox .albl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}"
+        ".abox .aval{font-size:26px;font-weight:700;margin:4px 0 0;"
+        "font-variant-numeric:tabular-nums;letter-spacing:-.02em}"
+        ".abox.ok{border-color:var(--ok);background:var(--ok-bg)}"
+        ".abox.warn{border-color:var(--warn);background:var(--warn-bg)}"
+        ".chk-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;"
+        "font-size:15px;cursor:pointer;user-select:none}"
+        ".chk-row input{width:18px;height:18px;cursor:pointer}"
+        ".srow{margin-bottom:16px}"
+        ".srow-lbl{display:flex;justify-content:space-between;font-size:14px;"
+        "margin-bottom:8px;font-weight:500}"
+        ".srow input[type=range]{width:100%;height:6px;-webkit-appearance:none;"
+        "appearance:none;background:var(--border);border-radius:99px;outline:none}"
+        ".srow input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;"
+        "width:22px;height:22px;border-radius:50%;background:var(--accent);cursor:pointer}"
+        ".wbtn{width:100%;padding:13px;font-size:15px;font-weight:600;border:0;"
+        "border-radius:12px;background:var(--btn);color:var(--btn-text);"
+        "cursor:pointer;margin-top:8px;transition:opacity .15s}"
+        ".wbtn:disabled{opacity:.35;cursor:not-allowed}"
+        ".wbtn.sec{background:var(--border);color:var(--text)}"
+        ".msg{font-size:14px;padding:10px 14px;border-radius:10px;"
+        "margin-top:12px;display:none;line-height:1.4}"
+        ".msg.ok{color:var(--ok);background:var(--ok-bg);display:block}"
+        ".msg.err{color:var(--err);background:var(--err-bg);display:block}"
+        ".done-icon{text-align:center;font-size:60px;margin:4px 0 14px}"
+        ".done-title{text-align:center;font-size:20px;font-weight:700;margin-bottom:6px}"
+        ".done-sub{text-align:center;color:var(--muted);font-size:14px;margin-bottom:22px;line-height:1.5}"
+        "a.go-link{display:block;text-align:center;padding:13px;border-radius:12px;"
+        "background:var(--btn);color:var(--btn-text);font-size:15px;font-weight:600;"
+        "text-decoration:none;margin-top:8px}"
+        "a.back-link{display:block;text-align:center;margin-top:12px;"
+        "color:var(--accent);text-decoration:none;font-size:13px}"
+        "</style></head>"
+    );
+
+    /* wizard container + header */
+    send_chunk(req,
+        "<body><div class='wizard'>"
+        "<div class='wiz-head'>"
+        "<h2>Leveler Setup Wizard</h2>"
+        "<p class='wiz-sub' id='stepSub'>Step 1 of 3: Level Reference</p>"
+        "<div class='dots'>"
+        "<div class='dot active' id='dot1'></div>"
+        "<div class='dot' id='dot2'></div>"
+        "<div class='dot' id='dot3'></div>"
+        "</div></div>"
+        "<div class='wiz-body'>"
+    );
+
+    /* Step 1: Level Reference */
+    send_chunk(req,
+        "<div class='step active' id='step1'>"
+        "<p class='desc'>Park on the surface you consider &#x2018;level,&#x2019; "
+        "then tap <b>Set Zero Reference</b>. "
+        "This stores your calibration baseline.</p>"
+        "<div class='vehicle-wrap'>"
+        "<span class='ax top'>FRONT</span>"
+        "<span class='ax bot'>REAR</span>"
+        "<span class='ax lft'>L</span>"
+        "<span class='ax rgt'>R</span>"
+    );
+    send_chunk(req, "<img src='data:image/jpeg;base64,");
+    httpd_resp_send_chunk(req, s_vehicle_b64, (ssize_t)(sizeof(s_vehicle_b64) - 1));
+    send_chunk(req,
+        "' alt='Vehicle top-down view'></div>"
+        "<div class='angle-row'>"
+        "<div class='abox' id='rBox'>"
+        "<div class='albl'>Roll &#x2194;</div>"
+        "<div class='aval' id='rVal'>&#x2014;</div>"
+        "</div>"
+        "<div class='abox' id='pBox'>"
+        "<div class='albl'>Pitch &#x2195;</div>"
+        "<div class='aval' id='pVal'>&#x2014;</div>"
+        "</div></div>"
+        "<button class='wbtn' onclick='doZero()'>Set Zero Reference</button>"
+        "<div class='msg' id='zMsg'></div>"
+        "</div>"   /* end step1 */
+    );
+
+    /* Step 2: Audio — split across plain send_chunk calls to stay under the
+       512-byte send_chunkf buffer; only the mute/volume values use chunkf. */
+    send_chunk(req,
+        "<div class='step' id='step2'>"
+        "<p class='desc'>Adjust beeper volume and test it. "
+        "The tone speeds up as your vehicle approaches level.</p>"
+        "<label class='chk-row'>"
+        "<input type='checkbox' id='muteChk'"
+    );
+    send_chunk(req, muted ? " checked" : "");
+    send_chunk(req, "><span>Mute beeper</span></label>"
+        "<div class='srow'>"
+        "<div class='srow-lbl'><span>Volume</span>"
+        "<span id='volPct'>"
+    );
+    send_chunkf(req, "%d%%", vol);
+    send_chunk(req, "</span></div>"
+        "<input type='range' id='volSlider' min='0' max='100' value='"
+    );
+    send_chunkf(req, "%d", vol);
+    send_chunk(req,
+        "' oninput='document.getElementById(\"volPct\").textContent=this.value+\"%\"'>"
+        "</div>"
+        "<button class='wbtn sec' onclick='doBeep()'>&#9654; Test Beep</button>"
+        "<button class='wbtn' onclick='doSaveAudio()'>Save &amp; Continue &#x2192;</button>"
+        "<div class='msg' id='aMsg'></div>"
+        "</div>"   /* end step2 */
+    );
+
+    /* Step 3: Done */
+    send_chunk(req,
+        "<div class='step' id='step3'>"
+        "<div class='done-icon'>&#x2705;</div>"
+        "<div class='done-title'>Setup Complete</div>"
+        "<div class='done-sub'>Your Leveler is calibrated and ready to use.<br>"
+        "Head to the dashboard to monitor angles.</div>"
+        "<a href='/status' class='go-link'>Go to Dashboard &#x2192;</a>"
+        "<a href='/' class='back-link'>Back to Settings</a>"
+        "</div>"   /* end step3 */
+    );
+
+    send_chunk(req, "</div></div>");   /* wiz-body / wizard */
+
+    /* JavaScript — inject CSRF token via send_chunkf (fits in 512 B),
+       then send the static function body as plain chunks. */
+    send_chunkf(req, "<script>var _csrf='%s';", s_csrf_token);
+    send_chunk(req,
+        "var pollT=null;"
+        "var SUBS=['Step 1 of 3: Level Reference',"
+        "'Step 2 of 3: Audio Settings',"
+        "'Step 3 of 3: Setup Complete'];"
+        "function goStep(n){"
+        "document.querySelectorAll('.step').forEach(function(s){"
+        "s.classList.remove('active');});"
+        "document.getElementById('step'+n).classList.add('active');"
+        "[1,2,3].forEach(function(i){"
+        "var d=document.getElementById('dot'+i);"
+        "d.className='dot'+(i<n?' done':i===n?' active':'');});"
+        "document.getElementById('stepSub').textContent=SUBS[n-1];"
+        "if(n===1)startPoll();else stopPoll();}"
+        "function startPoll(){"
+        "if(pollT)return;"
+        "fetchA();pollT=setInterval(fetchA,600);}"
+        "function stopPoll(){clearInterval(pollT);pollT=null;}"
+        "function fetchA(){"
+        "fetch('/status.json').then(function(r){return r.json();})"
+        ".then(function(d){setA('rBox','rVal',d.roll_deg);"
+        "setA('pBox','pVal',d.pitch_deg);})['catch'](function(){});}"
+        "function setA(bid,vid,v){"
+        "var box=document.getElementById(bid);"
+        "var val=document.getElementById(vid);"
+        "val.textContent=(v>=0?'+':'')+v.toFixed(2)+'\u00b0';"
+        "box.className='abox'+(Math.abs(v)<0.5?' ok':Math.abs(v)<2?' warn':'');}"
+        "function post(url,extra){"
+        "return fetch(url,{method:'POST',"
+        "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+        "body:'csrf_token='+encodeURIComponent(_csrf)+(extra||'')});}"
+        "function doZero(){"
+        "var m=document.getElementById('zMsg');m.className='msg';"
+        "post('/wizard/zero').then(function(r){return r.json();})"
+        ".then(function(d){"
+        "if(d.ok){m.textContent='\u2713 Zero set!';m.className='msg ok';"
+        "setTimeout(function(){goStep(2);},1000);}"
+        "else{m.textContent='\u2717 '+d.error;m.className='msg err';}})"
+        "['catch'](function(){m.textContent='\u2717 Request failed';m.className='msg err';});}"
+        "function doBeep(){"
+        "var b=document.querySelector('[onclick=\"doBeep()\"]');"
+        "if(b){b.disabled=true;b.textContent='\u266a Beeping\u2026';}"
+        "post('/wizard/beep_test')['catch'](function(){})"
+        ".finally(function(){"
+        "setTimeout(function(){if(b){b.disabled=false;"
+        "b.textContent='\u25b6 Test Beep';}},900);});}"
+        "function doSaveAudio(){"
+        "var m=document.getElementById('aMsg');m.className='msg';"
+        "var v=document.getElementById('volSlider').value;"
+        "var mu=document.getElementById('muteChk').checked?'1':'0';"
+        "post('/wizard/audio_save','&volume='+v+'&muted='+mu)"
+        ".then(function(r){return r.json();})"
+        ".then(function(d){"
+        "if(d.ok){m.textContent='\u2713 Saved!';m.className='msg ok';"
+        "setTimeout(function(){goStep(3);},800);}"
+        "else{m.textContent='\u2717 '+d.error;m.className='msg err';}})"
+        "['catch'](function(){m.textContent='\u2717 Request failed';m.className='msg err';});}"
+        "startPoll();"
+        "</script>"
+    );
+
+    send_chunk(req, "</body></html>");
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+/* =========================================================
+ * HTTP: /wizard/zero (POST) — store current orientation as zero
+ * ========================================================= */
+static esp_err_t http_wizard_zero_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0 || total > 256) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad content length");
+        return ESP_OK;
+    }
+    char *body = (char *)calloc(1, (size_t)total + 1);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No mem");
+        return ESP_OK;
+    }
+    int rcvd = 0;
+    while (rcvd < total) {
+        int r = httpd_req_recv(req, body + rcvd, total - rcvd);
+        if (r <= 0) {
+            free(body);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+            return ESP_OK;
+        }
+        rcvd += r;
+    }
+    body[rcvd] = '\0';
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
+    free(body);
+
+    lvgl_port_lock(-1);
+    ui_zero_current();
+    lvgl_port_unlock();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+/* =========================================================
+ * HTTP: /wizard/beep_test (POST) — fire a one-shot test beep
+ * ========================================================= */
+static esp_err_t http_wizard_beep_test_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0 || total > 256) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad content length");
+        return ESP_OK;
+    }
+    char *body = (char *)calloc(1, (size_t)total + 1);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No mem");
+        return ESP_OK;
+    }
+    int rcvd = 0;
+    while (rcvd < total) {
+        int r = httpd_req_recv(req, body + rcvd, total - rcvd);
+        if (r <= 0) {
+            free(body);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+            return ESP_OK;
+        }
+        rcvd += r;
+    }
+    body[rcvd] = '\0';
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
+    free(body);
+
+    audio_mgr_request_beep();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+/* =========================================================
+ * HTTP: /wizard/audio_save (POST) — persist mute + volume
+ * ========================================================= */
+static esp_err_t http_wizard_audio_save_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0 || total > 256) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad content length");
+        return ESP_OK;
+    }
+    char *body = (char *)calloc(1, (size_t)total + 1);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No mem");
+        return ESP_OK;
+    }
+    int rcvd = 0;
+    while (rcvd < total) {
+        int r = httpd_req_recv(req, body + rcvd, total - rcvd);
+        if (r <= 0) {
+            free(body);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+            return ESP_OK;
+        }
+        rcvd += r;
+    }
+    body[rcvd] = '\0';
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
+
+    char vol_s[8]   = {0};
+    char muted_s[4] = {0};
+    (void)form_get_value(body, "volume", vol_s,   sizeof(vol_s));
+    (void)form_get_value(body, "muted",  muted_s, sizeof(muted_s));
+    free(body);
+
+    int vol = atoi(vol_s);
+    if (vol < 0)   vol = 0;
+    if (vol > 100) vol = 100;
+    bool muted_new = (muted_s[0] == '1');
+
+    audio_mgr_set_volume(vol);
+    audio_mgr_set_muted(muted_new);
+    ui_save_audio_prefs();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+/* =========================================================
  * HTTP server start / ensure
  * ========================================================= */
 // HTTP server: setup UI, status UI, and endpoints.
 static httpd_handle_t start_http_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 23;
+    cfg.max_uri_handlers = 25;  /* 20 existing + 4 wizard + 1 headroom */
     cfg.stack_size = 8192;  // extra headroom for OTA flash writes
     cfg.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -2544,6 +3202,40 @@ static httpd_handle_t start_http_server(void)
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &cp_fwlink);
+
+
+    // Calibration wizard
+    httpd_uri_t wizard = {
+        .uri = "/wizard",
+        .method = HTTP_GET,
+        .handler = http_wizard_get,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &wizard);
+
+    httpd_uri_t wizard_zero = {
+        .uri = "/wizard/zero",
+        .method = HTTP_POST,
+        .handler = http_wizard_zero_post,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &wizard_zero);
+
+    httpd_uri_t wizard_beep = {
+        .uri = "/wizard/beep_test",
+        .method = HTTP_POST,
+        .handler = http_wizard_beep_test_post,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &wizard_beep);
+
+    httpd_uri_t wizard_audio = {
+        .uri = "/wizard/audio_save",
+        .method = HTTP_POST,
+        .handler = http_wizard_audio_save_post,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &wizard_audio);
 
     // Captive portal-ish wildcard: serve setup UI for unknown GETs
     httpd_uri_t wildcard = {

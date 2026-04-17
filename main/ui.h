@@ -29,6 +29,8 @@ void ui_toggle_mute(void);
 void ui_toggle_mute_runtime(void);
 // Show a persistent rollback warning banner (OTA new firmware failed, reverted).
 void ui_show_rollback_warning(void);
+// Persist current mute/volume to NVS (called by HTTP wizard handler after updating state).
+void ui_save_audio_prefs(void);
 
 #ifdef __cplusplus
 }

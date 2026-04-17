@@ -54,6 +54,7 @@ static portMUX_TYPE s_angle_mux = portMUX_INITIALIZER_UNLOCKED;
 static float s_roll = 0.0f;
 static float s_pitch = 0.0f;
 static bool s_stationary = true;
+static bool s_force_beep = false;  // set by audio_mgr_request_beep(), cleared by beep task
 
 static int16_t s_beep_buf[(AUDIO_SAMPLE_RATE * AUDIO_BEEP_MS / 1000) * 2];
 static size_t s_beep_bytes = 0;
@@ -180,17 +181,21 @@ static void audio_beep_task(void *arg)
     while (1) {
         float roll, pitch;
         bool muted, enabled, stationary;
+        bool force;
         portENTER_CRITICAL(&s_angle_mux);
         roll = s_roll;
         pitch = s_pitch;
         muted = s_muted;
         enabled = s_enabled;
         stationary = s_stationary;
+        force = s_force_beep;
+        if (force) s_force_beep = false;
         portEXIT_CRITICAL(&s_angle_mux);
 
-        if (enabled && !muted && s_tx && s_beep_bytes > 0) {
+        /* Force-beep (e.g. wizard test) bypasses mute so hardware can be tested. */
+        if (enabled && s_tx && s_beep_bytes > 0 && (!muted || force)) {
             int64_t now = esp_timer_get_time();
-            if (now >= next_beep_us) {
+            if (force || now >= next_beep_us) {
                 size_t written = 0;
                 (void)i2s_channel_write(s_tx, s_beep_buf, s_beep_bytes, &written, 50);
                 uint32_t interval_ms = audio_beep_interval_ms(roll, pitch, stationary);
@@ -282,4 +287,11 @@ int audio_mgr_get_volume(void)
     volume_pct = s_volume_pct;
     portEXIT_CRITICAL(&s_angle_mux);
     return volume_pct;
+}
+
+void audio_mgr_request_beep(void)
+{
+    portENTER_CRITICAL(&s_angle_mux);
+    s_force_beep = true;
+    portEXIT_CRITICAL(&s_angle_mux);
 }

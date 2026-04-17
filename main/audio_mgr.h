@@ -27,6 +27,10 @@ bool audio_mgr_is_enabled(void);
 void audio_mgr_set_volume(int volume_pct);
 int audio_mgr_get_volume(void);
 
+// Request an immediate one-shot beep (e.g. from calibration wizard test).
+// Fires on the next beep-task tick regardless of cadence timer; respects mute.
+void audio_mgr_request_beep(void);
+
 #ifdef __cplusplus
 }
 #endif
