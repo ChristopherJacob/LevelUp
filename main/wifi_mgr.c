@@ -1667,6 +1667,22 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<span id='themeIco'></span>"
         "</button>"
         "</div></div>"
+    );
+
+    // OTA rollback banner — shown when the previously flashed firmware failed to boot.
+    const esp_partition_t *invalid_part = esp_ota_get_last_invalid_partition();
+    if (invalid_part) {
+        send_chunkf(req,
+            "<div style='background:#c0510a;color:#fff;padding:10px 14px;border-radius:8px;"
+            "margin-bottom:12px;font-size:.95em'>"
+            "&#9888; <strong>OTA rollback:</strong> The firmware flashed to &lsquo;%s&rsquo; "
+            "did not boot cleanly and was automatically reverted. "
+            "Please flash a corrected build before trying again."
+            "</div>",
+            invalid_part->label);
+    }
+
+    send_chunk(req,
         "<div class='grid'>"
         "<div class='card'>"
         "<details open><summary>Status</summary>"

@@ -27,6 +27,8 @@ void ui_zero_hold_complete(void);
 void ui_toggle_mute(void);
 // Toggle mute without writing to NVS (for fast hardware button path).
 void ui_toggle_mute_runtime(void);
+// Show a persistent rollback warning banner (OTA new firmware failed, reverted).
+void ui_show_rollback_warning(void);
 
 #ifdef __cplusplus
 }
