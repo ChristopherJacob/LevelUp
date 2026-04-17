@@ -13,6 +13,7 @@
 #include "mqtt_mgr.h"
 #include "audio_mgr.h"
 #include "button_mgr.h"
+#include "watchdog.h"
 
 static const char *TAG = "app";
 
@@ -60,4 +61,5 @@ void app_main(void)
 
     ESP_ERROR_CHECK(button_mgr_init());
     ESP_ERROR_CHECK(imu_task_start());
+    watchdog_start();
 }

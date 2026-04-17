@@ -20,6 +20,8 @@ void lvgl_port_set_screen_timeout_ms(uint32_t timeout_ms);
 void lvgl_port_set_screen_on(bool on);
 /** Query current display panel power state. */
 bool lvgl_port_is_screen_on(void);
+/** Milliseconds since the last successful LVGL render frame (UINT32_MAX if never). */
+uint32_t lvgl_port_ms_since_frame(void);
 
 #ifdef __cplusplus
 }

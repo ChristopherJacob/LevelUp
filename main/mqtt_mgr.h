@@ -14,3 +14,5 @@ void mqtt_mgr_update_accel(float ax, float ay, float az);
 esp_err_t mqtt_mgr_restart(void);
 // Current MQTT transport state.
 bool mqtt_mgr_is_connected(void);
+// Milliseconds since the MQTT publish task last looped (UINT32_MAX if not started).
+uint32_t mqtt_mgr_ms_since_alive(void);

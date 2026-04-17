@@ -15,6 +15,7 @@ idf_component_register(
     "mqtt_mgr.c"
     "audio_mgr.c"
     "button_mgr.c"
+    "watchdog.c"
   INCLUDE_DIRS "."
   REQUIRES
     driver

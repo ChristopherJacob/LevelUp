@@ -24,6 +24,7 @@
 #include "driver/gpio.h"
 
 static const char *TAG = "lvgl_port";
+static int64_t s_last_frame_us = 0;
 
 #define LVGL_TICK_PERIOD_MS        2
 #define LVGL_TASK_MAX_DELAY_MS   500
@@ -123,6 +124,7 @@ static void lvgl_task(void *arg)
 
         if (lvgl_port_lock(100)) {
             delay_ms = lv_timer_handler();
+            s_last_frame_us = esp_timer_get_time();
             lvgl_port_unlock();
         } else {
             ESP_LOGW(TAG, "lvgl lock timeout, skipping frame");
@@ -417,4 +419,13 @@ void lvgl_port_set_screen_on(bool on)
 bool lvgl_port_is_screen_on(void)
 {
     return s_screen_on;
+}
+
+uint32_t lvgl_port_ms_since_frame(void)
+{
+    int64_t last = s_last_frame_us;
+    if (last <= 0) return UINT32_MAX;
+    int64_t age = esp_timer_get_time() - last;
+    if (age < 0) age = 0;
+    return (uint32_t)(age / 1000LL);
 }

@@ -30,6 +30,7 @@ static const char *TAG = "mqtt_mgr";
 static EventGroupHandle_t s_mqtt_events;
 static esp_mqtt_client_handle_t s_client;
 static TaskHandle_t s_pub_task = NULL;
+static int64_t s_task_last_alive_us = 0;
 
 static portMUX_TYPE s_angle_mux = portMUX_INITIALIZER_UNLOCKED;
 static float s_last_roll = 0.0f;
@@ -315,6 +316,7 @@ static void mqtt_mgr_task(void *arg)
         pdMS_TO_TICKS(1000 / CONFIG_LEVELUP_MQTT_PUBLISH_HZ);
 
     while (1) {
+        s_task_last_alive_us = esp_timer_get_time();
         EventBits_t bits = xEventGroupGetBits(s_mqtt_events);
         if (bits & MQTT_CONNECTED_BIT) {
             mqtt_mgr_publish_state();
@@ -483,4 +485,13 @@ bool mqtt_mgr_is_connected(void)
     if (!s_mqtt_events) return false;
     EventBits_t bits = xEventGroupGetBits(s_mqtt_events);
     return (bits & MQTT_CONNECTED_BIT) != 0;
+}
+
+uint32_t mqtt_mgr_ms_since_alive(void)
+{
+    int64_t last = s_task_last_alive_us;
+    if (last <= 0) return UINT32_MAX;
+    int64_t age = esp_timer_get_time() - last;
+    if (age < 0) age = 0;
+    return (uint32_t)(age / 1000LL);
 }
