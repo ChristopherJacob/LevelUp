@@ -1075,6 +1075,13 @@ static esp_err_t http_save_post(httpd_req_t *req)
 
     free(body);
 
+    if (strcmp(ssid, s_ssid) == 0 && strcmp(pass, s_pass) == 0) {
+        ESP_LOGI(TAG, "wifi_save: no change, skipping NVS write and reboot");
+        httpd_resp_set_type(req, "text/html; charset=utf-8");
+        httpd_resp_sendstr(req, "<html><body><h3>No change.</h3><p><a href='/status'>Back to status</a></p></body></html>");
+        return ESP_OK;
+    }
+
     ESP_LOGI(TAG, "Saving Wi-Fi SSID='%s' (pass len=%d)", ssid, (int)strlen(pass));
     if (nvs_save_wifi(ssid, pass) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS save failed");
@@ -1149,6 +1156,22 @@ static esp_err_t http_mqtt_save_post(httpd_req_t *req)
     } else if (!pass_present || pass[0] == '\0') {
         keep_pass = true;
         pass_ptr = NULL;
+    }
+
+    // Skip write if all submitted fields match in-memory state.
+    // Password is skipped from comparison when keep_pass is set (blank field = "don't change").
+    bool mqtt_changed = (strcmp(uri,   s_mqtt_uri)   != 0) ||
+                        (strcmp(user,  s_mqtt_user)  != 0) ||
+                        (strcmp(topic, s_mqtt_topic) != 0) ||
+                        (strcmp(disc,  s_mqtt_disc)  != 0) ||
+                        (enable_flag != s_mqtt_enable)     ||
+                        (!keep_pass && pass_ptr && strcmp(pass_ptr, s_mqtt_pass) != 0);
+
+    if (!mqtt_changed) {
+        ESP_LOGI(TAG, "mqtt_save: no change, skipping NVS write");
+        httpd_resp_set_type(req, "text/html; charset=utf-8");
+        httpd_resp_sendstr(req, "<html><body><h3>No change.</h3><p><a href='/status'>Back to status</a></p></body></html>");
+        return ESP_OK;
     }
 
     ESP_LOGI(TAG, "Saving MQTT config (uri='%s', user='%s', topic='%s', disc='%s', enable=%s, keep_pass=%s)",
@@ -1235,6 +1258,16 @@ static esp_err_t http_config_save_post(httpd_req_t *req)
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid track width value");
             return ESP_OK;
         }
+    }
+
+    bool wb_changed = wheelbase_norm[0]  && strcmp(wheelbase_norm,  s_wheelbase_in) != 0;
+    bool tw_changed = trackwidth_norm[0] && strcmp(trackwidth_norm, s_trackwidth_in) != 0;
+
+    if (!wb_changed && !tw_changed) {
+        ESP_LOGI(TAG, "config_save: no change, skipping NVS write");
+        httpd_resp_set_type(req, "text/html; charset=utf-8");
+        httpd_resp_sendstr(req, "<html><body><h3>No change.</h3><p><a href='/status'>Back to status</a></p></body></html>");
+        return ESP_OK;
     }
 
     ESP_LOGI(TAG, "Saving config (wheelbase='%s', trackwidth='%s')", wheelbase_norm, trackwidth_norm);
@@ -1332,6 +1365,19 @@ static esp_err_t http_network_save_post(httpd_req_t *req)
         }
     }
 
+    bool net_changed = (strcmp(host, s_hostname) != 0) ||
+                       (use_dhcp != s_use_dhcp)         ||
+                       (strcmp(ip_norm, s_sta_ip) != 0) ||
+                       (strcmp(gw_norm, s_sta_gw) != 0) ||
+                       (strcmp(nm_norm, s_sta_nm) != 0);
+
+    if (!net_changed) {
+        ESP_LOGI(TAG, "network_save: no change, skipping NVS write and reboot");
+        httpd_resp_set_type(req, "text/html; charset=utf-8");
+        httpd_resp_sendstr(req, "<html><body><h3>No change.</h3><p><a href='/status'>Back to status</a></p></body></html>");
+        return ESP_OK;
+    }
+
     if (nvs_save_network(host, use_dhcp, ip_norm, gw_norm, nm_norm) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS save failed");
         return ESP_OK;
@@ -1392,6 +1438,13 @@ static esp_err_t http_display_save_post(httpd_req_t *req)
 
     uint32_t timeout_s = parse_u32_or_default(timeout_s_str, 60);
     if (timeout_s > 86400U) timeout_s = 86400U;
+
+    if (timeout_s == s_screen_timeout_s) {
+        ESP_LOGI(TAG, "display_save: no change, skipping NVS write");
+        httpd_resp_set_type(req, "text/html; charset=utf-8");
+        httpd_resp_sendstr(req, "<html><body><h3>No change.</h3><p><a href='/status'>Back to status</a></p></body></html>");
+        return ESP_OK;
+    }
 
     if (nvs_save_screen_timeout(timeout_s) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS save failed");
