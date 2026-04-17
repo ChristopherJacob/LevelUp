@@ -271,7 +271,16 @@ static char s_mqtt_disc[32] = {0};
 static bool s_mqtt_enable = false;
 static bool s_have_mqtt = false;
 
-#define UI_VERSION "2026-01-29-6"
+#define UI_VERSION "2026-04-16-1"
+
+/* ---- In-RAM log ring buffer (captured via vprintf hook) ---- */
+#define LOG_BUF_SIZE        8192
+static char           s_log_buf[LOG_BUF_SIZE];
+static char           s_log_stage[256]; // static: NOT stack-allocated in the hook
+static uint32_t       s_log_head = 0;
+static bool           s_log_full = false;
+static portMUX_TYPE   s_log_mux  = portMUX_INITIALIZER_UNLOCKED;
+static vprintf_like_t s_orig_vprintf = NULL;
 
 /* ---------------- vehicle config cache ---------------- */
 static char s_wheelbase_in[16] = {0};
@@ -1568,40 +1577,96 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "});</script>",
         s_csrf_token);
     send_chunk(req,
-        "<title>Leveler Dashboard</title>"
+        "<title>Level Up Dashboard</title>"
         "<style>"
-        "body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:24px;background:#f7f7f8;color:#111;}"
-        ".wrap{max-width:1100px;margin:0 auto;}"
-        ".title{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}"
-        ".title h2{margin:0;font-size:22px;}"
-        ".grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;}"
-        ".card{background:#fff;padding:18px;border:1px solid #e6e6e9;border-radius:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);}"
-        "@media(max-width:900px){.grid{grid-template-columns:1fr;}}"
+        ":root{--bg:#f5f6fa;--surface:#fff;--border:#e0e1e7;--text:#1a1b1e;"
+        "--muted:#6b7280;--accent:#2563eb;--btn:#1d1d1f;--btn-text:#fff;"
+        "--shadow:0 1px 4px rgba(0,0,0,.08);"
+        "--ok:#16a34a;--ok-bg:#dcfce7;--err:#dc2626;--err-bg:#fee2e2;"
+        "--warn:#d97706;--warn-bg:#fef3c7;--neu:#6b7280;--neu-bg:#f3f4f6}"
+        "[data-theme=dark]{--bg:#111827;--surface:#1f2937;--border:#374151;--text:#f9fafb;"
+        "--muted:#9ca3af;--accent:#60a5fa;--btn:#f3f4f6;--btn-text:#111827;"
+        "--shadow:0 1px 4px rgba(0,0,0,.4);"
+        "--ok:#4ade80;--ok-bg:#052e16;--err:#f87171;--err-bg:#450a0a;"
+        "--warn:#fbbf24;--warn-bg:#451a03;--neu:#6b7280;--neu-bg:#374151}"
+        "body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:24px;"
+        "background:var(--bg);color:var(--text);transition:background .2s,color .2s}"
+        ".wrap{max-width:1100px;margin:0 auto}"
+        ".title{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}"
+        ".title h2{margin:0;font-size:22px}"
+        ".title-right{display:flex;align-items:center;gap:12px}"
+        ".grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}"
+        ".card{background:var(--surface);padding:18px;border:1px solid var(--border);"
+        "border-radius:18px;box-shadow:var(--shadow)}"
+        "@media(max-width:900px){.grid{grid-template-columns:1fr}}"
         "table{width:100%;border-collapse:collapse;margin-top:10px}"
-        "td{padding:10px 8px;border-bottom:1px solid #eee;vertical-align:top}"
-        "label{display:block;margin:10px 0 6px;font-weight:600;}"
-        "input{width:100%;font-size:14px;padding:10px;border:1px solid #ccc;border-radius:10px;}"
+        "td{padding:9px 8px;border-bottom:1px solid var(--border);vertical-align:middle}"
+        "td:first-child{color:var(--muted);font-size:13px;width:44%}"
+        "label{display:block;margin:10px 0 6px;font-weight:600}"
+        "input[type=text],input[type=password],input:not([type]){"
+        "width:100%;font-size:14px;padding:10px;"
+        "border:1px solid var(--border);border-radius:10px;"
+        "background:var(--surface);color:var(--text);box-sizing:border-box}"
+        "input[type=checkbox]{width:auto}"
         ".row{display:flex;gap:10px;flex-wrap:wrap}"
         ".row>div{flex:1;min-width:220px}"
         ".pw-wrap{display:flex;gap:8px;align-items:center}"
         ".pw-wrap input{flex:1}"
         ".pw-btn{width:44px;height:40px;display:inline-flex;align-items:center;justify-content:center;"
-        "border:1px solid #ccc;border-radius:10px;background:#f5f5f5;color:#111}"
-        ".pw-btn svg{width:20px;height:20px;fill:#333}"
-        ".pw-btn.is-on{background:#111}"
-        ".pw-btn.is-on svg{fill:#fff}"
-        ".muted{color:#666;font-size:13px}"
-        "button{margin-top:14px;width:100%;padding:12px;font-size:16px;border:0;border-radius:12px;background:#111;color:#fff;}"
-        ".danger{background:#b00020}"
-        "a{color:#005bd1;text-decoration:none}"
-        "details{border:1px solid #ececf0;border-radius:12px;padding:8px 12px;margin-top:10px;background:#fcfcfd}"
-        "summary{cursor:pointer;font-weight:700;list-style:none;}"
+        "border:1px solid var(--border);border-radius:10px;background:var(--surface);"
+        "color:var(--text);cursor:pointer}"
+        ".pw-btn svg{width:20px;height:20px;fill:var(--text)}"
+        ".pw-btn.is-on{background:var(--btn)}"
+        ".pw-btn.is-on svg{fill:var(--btn-text)}"
+        ".muted{color:var(--muted);font-size:13px}"
+        "button:not(#themeBtn):not(.pw-btn):not(.btn-sm){margin-top:14px;width:100%;padding:12px;"
+        "font-size:15px;font-weight:600;border:0;border-radius:12px;"
+        "background:var(--btn);color:var(--btn-text);cursor:pointer}"
+        ".btn-sm{padding:4px 12px;font-size:13px;border:1px solid var(--border);"
+        "border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer}"
+        ".danger{background:#dc2626!important;color:#fff!important}"
+        "a{color:var(--accent);text-decoration:none}"
+        "details{border:1px solid var(--border);border-radius:12px;padding:8px 12px;"
+        "margin-top:10px;background:var(--surface)}"
+        "summary{cursor:pointer;font-weight:700;list-style:none;padding:4px 0}"
         "summary::-webkit-details-marker{display:none}"
-        "details>summary::after{content:'+';float:right;color:#666}"
+        "details>summary::after{content:'+';float:right;color:var(--muted)}"
         "details[open]>summary::after{content:'-'}"
-        "</style></head><body><div class='wrap'>"
-        "<div class='title'><h2>Leveler Dashboard</h2>"
-        "<span class='muted'>UI version: " UI_VERSION "</span></div>"
+        ".badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;"
+        "border-radius:99px;letter-spacing:.02em}"
+        ".ok{color:var(--ok);background:var(--ok-bg)}"
+        ".err{color:var(--err);background:var(--err-bg)}"
+        ".warn{color:var(--warn);background:var(--warn-bg)}"
+        ".neu{color:var(--neu);background:var(--neu-bg)}"
+        ".tip{position:relative;cursor:help;border-bottom:1px dotted var(--muted)}"
+        ".tip::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 6px);"
+        "background:#1a1b1e;color:#f9fafb;font-size:12px;font-weight:400;"
+        "padding:6px 10px;border-radius:8px;white-space:normal;max-width:220px;"
+        "width:max-content;box-shadow:0 2px 8px rgba(0,0,0,.3);"
+        "z-index:10;opacity:0;pointer-events:none;transition:opacity .15s}"
+        ".tip:hover::after{opacity:1}"
+        "#themeBtn{display:inline-flex;align-items:center;justify-content:center;"
+        "width:34px;height:34px;border-radius:50%;border:1px solid var(--border);"
+        "background:var(--surface);cursor:pointer;padding:0;font-size:17px;line-height:1}"
+        "#otaBar{background:var(--border)!important}"
+        "#otaFill{background:var(--accent)!important}"
+        "</style>"
+        "<script>(function(){"
+        "var t=localStorage.getItem('theme');"
+        "if(t==='dark'||(t==null&&window.matchMedia&&"
+        "window.matchMedia('(prefers-color-scheme:dark)').matches))"
+        "{document.documentElement.setAttribute('data-theme','dark');}"
+        "})();</script>"
+        "</head>"
+        "<body><div class='wrap'>"
+        "<div class='title'>"
+        "<h2>Leveler Dashboard</h2>"
+        "<div class='title-right'>"
+        "<span class='muted'>v" UI_VERSION "</span>"
+        "<button id='themeBtn' type='button' aria-label='Toggle dark mode' onclick='toggleTheme()'>"
+        "<span id='themeIco'></span>"
+        "</button>"
+        "</div></div>"
         "<div class='grid'>"
         "<div class='card'>"
         "<details open><summary>Status</summary>"
@@ -1615,48 +1680,121 @@ static esp_err_t http_status_get(httpd_req_t *req)
     bool mqtt_connected = mqtt_mgr_is_connected();
     bool screen_on = lvgl_port_is_screen_on();
 
+    bool connected = wifi_mgr_is_connected();
     send_chunk(req, "<table>");
-    send_chunkf(req, "<tr><td><b>Mode</b></td><td>%s</td></tr>", s_running_ap ? "AP (setup)" : "STA");
-    send_chunkf(req, "<tr><td><b>Configured SSID</b></td><td>%s</td></tr>", s_have_creds ? s_ssid : "(none)");
-    send_chunkf(req, "<tr><td><b>Connected</b></td><td>%s</td></tr>", wifi_mgr_is_connected() ? "YES" : "NO");
-    send_chunkf(req, "<tr><td><b>IP</b></td><td>%s</td></tr>", ipbuf[0] ? ipbuf : "(none)");
-    send_chunkf(req, "<tr><td><b>Gateway</b></td><td>%s</td></tr>", gwbuf[0] ? gwbuf : "(none)");
-    send_chunkf(req, "<tr><td><b>Netmask</b></td><td>%s</td></tr>", nmbuf[0] ? nmbuf : "(none)");
-    send_chunkf(req, "<tr><td><b>RSSI</b></td><td>%d</td></tr>", rssi);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='AP = setup access point active; STA = joined to your Wi-Fi network'>Mode</span></td>"
+        "<td><span class='badge neu'>%s</span></td></tr>",
+        s_running_ap ? "AP" : "STA");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Wi-Fi network name saved in device settings'>SSID</span></td>"
+        "<td>%s</td></tr>",
+        s_have_creds ? s_ssid : "(none)");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Whether device is currently joined to the configured Wi-Fi network'>Connected</span></td>"
+        "<td><span class='badge %s'>%s</span></td></tr>",
+        connected ? "ok" : "err", connected ? "YES" : "NO");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Device IP address on the local network'>IP</span></td>"
+        "<td>%s</td></tr>", ipbuf[0] ? ipbuf : "(none)");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Router IP address (network gateway)'>Gateway</span></td>"
+        "<td>%s</td></tr>", gwbuf[0] ? gwbuf : "(none)");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Subnet mask defining the local network range'>Netmask</span></td>"
+        "<td>%s</td></tr>", nmbuf[0] ? nmbuf : "(none)");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Wi-Fi signal strength in dBm — e.g. -40 excellent, -70 fair, -85 poor'>RSSI</span></td>"
+        "<td>%d dBm</td></tr>", rssi);
     float roll_in = tanf(roll * DEG2RAD) * s_trackwidth_val;
     float pitch_in = tanf(pitch * DEG2RAD) * s_wheelbase_val;
-
-    send_chunkf(req, "<tr><td><b>Roll</b></td><td>%.3f&deg;</td></tr>", roll);
-    send_chunkf(req, "<tr><td><b>Pitch</b></td><td>%.3f&deg;</td></tr>", pitch);
-    send_chunkf(req, "<tr><td><b>Roll (in)</b></td><td>%.1f in</td></tr>", roll_in);
-    send_chunkf(req, "<tr><td><b>Pitch (in)</b></td><td>%.1f in</td></tr>", pitch_in);
-    send_chunkf(req, "<tr><td><b>Accel X</b></td><td>%.4f</td></tr>", ax);
-    send_chunkf(req, "<tr><td><b>Accel Y</b></td><td>%.4f</td></tr>", ay);
-    send_chunkf(req, "<tr><td><b>Accel Z</b></td><td>%.4f</td></tr>", az);
-    send_chunkf(req, "<tr><td><b>MQTT config</b></td><td>%s</td></tr>",
-                s_have_mqtt ? "Saved" : "Defaults");
-    send_chunkf(req, "<tr><td><b>MQTT enabled</b></td><td>%s</td></tr>",
-                s_mqtt_enable ? "YES" : "NO");
-    send_chunkf(req, "<tr><td><b>Hostname</b></td><td>%s</td></tr>", s_hostname);
-    send_chunkf(req, "<tr><td><b>IP mode</b></td><td>%s</td></tr>", s_use_dhcp ? "DHCP" : "Static");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Left/right tilt in degrees — positive = right side high'>Roll</span></td>"
+        "<td>%.3f&deg;</td></tr>", roll);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Front/rear tilt in degrees — positive = nose high'>Pitch</span></td>"
+        "<td>%.3f&deg;</td></tr>", pitch);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Lateral level offset at the axle based on trackwidth and roll angle'>Roll (in)</span></td>"
+        "<td>%.1f in</td></tr>", roll_in);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Fore/aft level offset based on wheelbase and pitch angle'>Pitch (in)</span></td>"
+        "<td>%.1f in</td></tr>", pitch_in);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Raw accelerometer along the X axis in g-force'>Accel X</span></td>"
+        "<td>%.4f g</td></tr>", ax);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Raw accelerometer along the Y axis in g-force'>Accel Y</span></td>"
+        "<td>%.4f g</td></tr>", ay);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Raw accelerometer along the Z axis — 1.0 g when flat'>Accel Z</span></td>"
+        "<td>%.4f g</td></tr>", az);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Whether custom MQTT settings are saved or factory defaults are used'>MQTT config</span></td>"
+        "<td>%s</td></tr>", s_have_mqtt ? "Saved" : "Defaults");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Whether MQTT sensor publishing is currently active'>MQTT enabled</span></td>"
+        "<td><span class='badge %s'>%s</span></td></tr>",
+        s_mqtt_enable ? "ok" : "neu", s_mqtt_enable ? "YES" : "NO");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='mDNS name — device is accessible as hostname.local on your LAN'>Hostname</span></td>"
+        "<td>%s</td></tr>", s_hostname);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='DHCP = address assigned by router; Static = fixed address set manually'>IP mode</span></td>"
+        "<td><span class='badge neu'>%s</span></td></tr>",
+        s_use_dhcp ? "DHCP" : "Static");
     if (!s_use_dhcp) {
-        send_chunkf(req, "<tr><td><b>Static IP</b></td><td>%s</td></tr>", s_sta_ip);
-        send_chunkf(req, "<tr><td><b>Static Gateway</b></td><td>%s</td></tr>", s_sta_gw);
-        send_chunkf(req, "<tr><td><b>Static Netmask</b></td><td>%s</td></tr>", s_sta_nm);
+        send_chunkf(req,
+            "<tr><td><span class='tip' data-tip='Manually configured static IP address'>Static IP</span></td>"
+            "<td>%s</td></tr>", s_sta_ip);
+        send_chunkf(req,
+            "<tr><td><span class='tip' data-tip='Manually configured gateway (router) IP'>Static GW</span></td>"
+            "<td>%s</td></tr>", s_sta_gw);
+        send_chunkf(req,
+            "<tr><td><span class='tip' data-tip='Manually configured subnet mask'>Static NM</span></td>"
+            "<td>%s</td></tr>", s_sta_nm);
     }
-    send_chunkf(req, "<tr><td><b>Screen timeout</b></td><td>%u s</td></tr>", (unsigned)s_screen_timeout_s);
-    send_chunkf(req, "<tr><td><b>Wheelbase (in)</b></td><td>%s</td></tr>",
-                s_wheelbase_in[0] ? s_wheelbase_in : "Default (133)");
-    send_chunkf(req, "<tr><td><b>Track width (in)</b></td><td>%s</td></tr>",
-                s_trackwidth_in[0] ? s_trackwidth_in : "Default (65.2)");
-    send_chunk(req, "<tr><td colspan='2'><b>Diagnostics</b></td></tr>");
-    send_chunkf(req, "<tr><td><b>Uptime</b></td><td>%u s</td></tr>", (unsigned)uptime_s);
-    send_chunkf(req, "<tr><td><b>Free heap</b></td><td>%u bytes</td></tr>", (unsigned)free_heap);
-    send_chunkf(req, "<tr><td><b>IMU status</b></td><td>%s</td></tr>", imu_ok ? "OK" : "STALE/ERROR");
-    send_chunkf(req, "<tr><td><b>IMU age</b></td><td>%u ms</td></tr>", (unsigned)imu_age_ms);
-    send_chunkf(req, "<tr><td><b>IMU stationary</b></td><td>%s</td></tr>", imu_stationary ? "YES" : "NO");
-    send_chunkf(req, "<tr><td><b>MQTT connected</b></td><td>%s</td></tr>", mqtt_connected ? "YES" : "NO");
-    send_chunkf(req, "<tr><td><b>Screen</b></td><td>%s</td></tr>", screen_on ? "ON" : "OFF");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Seconds of inactivity before display blanks — 0 disables auto-off'>Screen timeout</span></td>"
+        "<td>%u s</td></tr>", (unsigned)s_screen_timeout_s);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Front-to-rear axle distance — used to convert pitch angle to level offset in inches'>Wheelbase</span></td>"
+        "<td>%s</td></tr>",
+        s_wheelbase_in[0] ? s_wheelbase_in : "133 (default)");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Left-to-right wheel distance — used to convert roll angle to level offset in inches'>Track width</span></td>"
+        "<td>%s</td></tr>",
+        s_trackwidth_in[0] ? s_trackwidth_in : "65.2 (default)");
+    send_chunk(req,
+        "<tr><td colspan='2' style='font-weight:700;font-size:11px;letter-spacing:.06em;"
+        "text-transform:uppercase;color:var(--muted);padding-top:16px;border-bottom:none'>"
+        "Diagnostics</td></tr>");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Time elapsed since the device last restarted'>Uptime</span></td>"
+        "<td>%u s</td></tr>", (unsigned)uptime_s);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Available heap RAM remaining on the device'>Free heap</span></td>"
+        "<td>%u B</td></tr>", (unsigned)free_heap);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='IMU health — OK = fresh angle data; STALE/ERR = no recent reading'>IMU status</span></td>"
+        "<td><span class='badge %s'>%s</span></td></tr>",
+        imu_ok ? "ok" : "err", imu_ok ? "OK" : "STALE/ERR");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Milliseconds since the last valid IMU reading was received'>IMU age</span></td>"
+        "<td>%u ms</td></tr>", (unsigned)imu_age_ms);
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Whether the IMU detects no motion — affects audio beep cadence'>IMU stationary</span></td>"
+        "<td><span class='badge %s'>%s</span></td></tr>",
+        imu_stationary ? "ok" : "warn", imu_stationary ? "YES" : "NO");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Whether the device is currently connected to the MQTT broker'>MQTT connected</span></td>"
+        "<td><span class='badge %s'>%s</span></td></tr>",
+        mqtt_connected ? "ok" : (s_mqtt_enable ? "err" : "neu"),
+        mqtt_connected ? "YES" : "NO");
+    send_chunkf(req,
+        "<tr><td><span class='tip' data-tip='Whether the LVGL display panel is active or blanked'>Screen</span></td>"
+        "<td><span class='badge %s'>%s</span></td></tr>",
+        screen_on ? "ok" : "neu", screen_on ? "ON" : "OFF");
     send_chunk(req, "</table></details></div>");
 
     send_chunk(req,
@@ -1891,8 +2029,55 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "}"
         "});"
         "}"
+        "function toggleTheme(){"
+        "var isDark=document.documentElement.getAttribute('data-theme')==='dark';"
+        "document.documentElement.setAttribute('data-theme',isDark?'light':'dark');"
+        "localStorage.setItem('theme',isDark?'light':'dark');"
+        "document.getElementById('themeIco').textContent=isDark?'\\u263D':'\\u2600';"
+        "}"
+        "(function(){"
+        "var isDark=document.documentElement.getAttribute('data-theme')==='dark';"
+        "document.getElementById('themeIco').textContent=isDark?'\\u2600':'\\u263D';"
+        "})();"
+        "var _logTimer=null;"
+        "function fetchLog(){"
+        "fetch('/logs').then(function(r){return r.text();}).then(function(t){"
+        "var pre=document.getElementById('logPre');"
+        "if(!pre)return;"
+        "var atBottom=(pre.scrollHeight-pre.scrollTop)<=pre.clientHeight+40;"
+        "pre.textContent=t;"
+        "if(atBottom)pre.scrollTop=pre.scrollHeight;"
+        "}).catch(function(){});}"
+        "function clearLog(){"
+        "var pre=document.getElementById('logPre');"
+        "if(pre)pre.textContent='';}"
+        "var _logLive=document.getElementById('logLive');"
+        "if(_logLive){"
+        "function _logToggle(){"
+        "if(_logLive.checked){fetchLog();_logTimer=setInterval(fetchLog,2000);}"
+        "else{clearInterval(_logTimer);_logTimer=null;}}"
+        "_logLive.addEventListener('change',_logToggle);"
+        "_logToggle();}"
         "</script>"
-        "</details></div></div></div></body></html>"
+        "</details></div></div>"
+    );
+    // Log panel — full-width row below the two-column grid.
+    send_chunk(req,
+        "<div class='card' style='margin-top:16px'>"
+        "<details><summary>Device Logs</summary>"
+        "<div style='display:flex;gap:10px;align-items:center;margin:10px 0 8px'>"
+        "<label style='margin:0;font-weight:normal;font-size:14px'>"
+        "<input type='checkbox' id='logLive' checked> Live"
+        "</label>"
+        "<button class='btn-sm' type='button' onclick='clearLog()'>Clear display</button>"
+        "</div>"
+        "<pre id='logPre'"
+        " style='height:300px;overflow-y:auto;font-size:11.5px;line-height:1.5;"
+        "background:var(--bg);border:1px solid var(--border);border-radius:8px;"
+        "padding:10px;white-space:pre-wrap;word-break:break-all;margin:0;color:var(--text)'>"
+        "</pre>"
+        "</details></div>"
+        "</div></body></html>"
     );
 
     httpd_resp_send_chunk(req, NULL, 0);
@@ -2035,13 +2220,89 @@ static esp_err_t http_ota_post(httpd_req_t *req)
 }
 
 /* =========================================================
+ * Log ring buffer — vprintf hook + HTTP endpoint
+ * ========================================================= */
+// Custom vprintf: tee into ring buffer then forward to original UART output.
+// IMPORTANT: uses s_log_stage (BSS) instead of stack-allocated buffers to
+// avoid blowing the stack on tasks with small stacks (e.g. app_main, audio).
+static int log_vprintf(const char *fmt, va_list args)
+{
+    // Forward to UART first using a va_copy so args stays at its initial position.
+    int ret = 0;
+    if (s_orig_vprintf) {
+        va_list tmp;
+        va_copy(tmp, args);
+        ret = s_orig_vprintf(fmt, tmp);
+        va_end(tmp);
+    }
+
+    // Format into static staging buffer, then strip ANSI and write to ring buffer.
+    // portMUX serializes access to both s_log_stage and the ring buffer.
+    portENTER_CRITICAL(&s_log_mux);
+    int n = vsnprintf(s_log_stage, sizeof(s_log_stage), fmt, args);
+    if (n > 0) {
+        if (n >= (int)sizeof(s_log_stage)) n = (int)sizeof(s_log_stage) - 1;
+        bool esc = false;
+        for (int i = 0; i < n; i++) {
+            char c = s_log_stage[i];
+            if (esc) {
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) esc = false;
+            } else if (c == '\033' && i + 1 < n && s_log_stage[i + 1] == '[') {
+                esc = true;
+                i++; // skip '['
+            } else {
+                s_log_buf[s_log_head] = c;
+                s_log_head = (s_log_head + 1) % LOG_BUF_SIZE;
+                if (s_log_head == 0) s_log_full = true;
+            }
+        }
+    }
+    portEXIT_CRITICAL(&s_log_mux);
+
+    return ret > 0 ? ret : (n > 0 ? n : 0);
+}
+
+// HTTP GET /logs — returns ring buffer contents as plain text.
+static esp_err_t http_logs_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    char *tmp = malloc(LOG_BUF_SIZE);
+    if (!tmp) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_OK;
+    }
+
+    portENTER_CRITICAL(&s_log_mux);
+    uint32_t head = s_log_head;
+    bool full = s_log_full;
+    size_t total;
+    if (!full) {
+        total = head;
+        memcpy(tmp, s_log_buf, total);
+    } else {
+        size_t tail_len = LOG_BUF_SIZE - head;
+        memcpy(tmp, s_log_buf + head, tail_len);
+        memcpy(tmp + tail_len, s_log_buf, head);
+        total = LOG_BUF_SIZE;
+    }
+    portEXIT_CRITICAL(&s_log_mux);
+
+    httpd_resp_send_chunk(req, tmp, (ssize_t)total);
+    httpd_resp_send_chunk(req, NULL, 0);
+    free(tmp);
+    return ESP_OK;
+}
+
+/* =========================================================
  * HTTP server start / ensure
  * ========================================================= */
 // HTTP server: setup UI, status UI, and endpoints.
 static httpd_handle_t start_http_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 22;
+    cfg.max_uri_handlers = 23;
     cfg.stack_size = 8192;  // extra headroom for OTA flash writes
     cfg.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -2156,6 +2417,15 @@ static httpd_handle_t start_http_server(void)
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &ota);
+
+    // Device log viewer
+    httpd_uri_t logs = {
+        .uri = "/logs",
+        .method = HTTP_GET,
+        .handler = http_logs_get,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &logs);
 
     // Captive portal detection endpoints -> redirect to "/"
     httpd_uri_t cp_generate = {
@@ -2473,6 +2743,11 @@ static esp_err_t start_ap(void)
 // Initialize Wi-Fi, HTTP server, and load persisted settings.
 esp_err_t wifi_mgr_init(void)
 {
+    // Install log capture hook as early as possible.
+    if (!s_orig_vprintf) {
+        s_orig_vprintf = esp_log_set_vprintf(log_vprintf);
+    }
+
     // NVS init (required for Wi-Fi + saved creds)
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -2513,6 +2788,9 @@ esp_err_t wifi_mgr_init(void)
                                 s_mqtt_topic, sizeof(s_mqtt_topic),
                                 s_mqtt_disc, sizeof(s_mqtt_disc),
                                 &s_mqtt_enable);
+
+    network_defaults();
+    nvs_load_network();
 
     config_defaults();
     (void)nvs_load_config(s_wheelbase_in, sizeof(s_wheelbase_in),
