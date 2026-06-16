@@ -1,5 +1,6 @@
 #include "leveling.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 
 static void test_orient_from_front(void)
@@ -25,9 +26,42 @@ static void test_orient_from_front(void)
     assert(o.left_sign == 1.0f);
 }
 
+static int near(float a, float b) { return fabsf(a - b) < 0.05f; }
+
+static void test_block_lifts(void)
+{
+    // Front-top orientation. Pure roll: left side high by 5 deg.
+    // trackwidth 60in -> half 30in -> left corners higher by 30*tan(5)+30*tan(5).
+    // Left corners are the reference (highest, lift 0); right corners need lifting.
+    leveling_orient_t o = leveling_orient_from_front(ORIENT_FRONT_TOP);
+    leveling_result_t r = leveling_compute(5.0f, 0.0f, 60.0f, 120.0f,
+                                           LEVEL_MODE_BLOCKS, o);
+    assert(r.guidance_available);
+    // left high -> FL, RL are reference (0); FR, RR lifted by 60*tan(5deg)=5.25in
+    assert(near(r.corner_lift_in[CORNER_FL], 0.0f));
+    assert(near(r.corner_lift_in[CORNER_RL], 0.0f));
+    assert(near(r.corner_lift_in[CORNER_FR], 5.25f));
+    assert(near(r.corner_lift_in[CORNER_RR], 5.25f));
+    assert(near(r.max_lift_in, 5.25f));
+    // worst corner is one of the two low (right) corners
+    assert(r.worst_corner == CORNER_FR || r.worst_corner == CORNER_RR);
+
+    // Perfectly level -> all zero.
+    leveling_result_t z = leveling_compute(0.0f, 0.0f, 60.0f, 120.0f,
+                                           LEVEL_MODE_BLOCKS, o);
+    assert(near(z.corner_lift_in[CORNER_FL], 0.0f));
+    assert(near(z.max_lift_in, 0.0f));
+
+    // Unset dimensions -> guidance unavailable.
+    leveling_result_t u = leveling_compute(5.0f, 0.0f, 0.0f, 120.0f,
+                                           LEVEL_MODE_BLOCKS, o);
+    assert(u.guidance_available == false);
+}
+
 int main(void)
 {
     test_orient_from_front();
+    test_block_lifts();
     printf("ALL TESTS PASSED\n");
     return 0;
 }
