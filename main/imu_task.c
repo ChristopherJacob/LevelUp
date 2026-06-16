@@ -15,6 +15,7 @@
 #include "wifi_mgr.h"   // <-- ADD THIS
 #include "mqtt_mgr.h"
 #include "audio_mgr.h"
+#include "leveling.h"
 
 #include <math.h>
 
@@ -307,6 +308,18 @@ static void imu_task(void *arg)
                     if (fabsf(roll_in) < 0.02f) roll_in = 0.0f;
                     if (fabsf(pitch_in) < 0.02f) pitch_in = 0.0f;
                     ui_set_inches(roll_in, pitch_in);
+
+                    // Shared leveling guidance (block/ramp) for all surfaces.
+                    leveling_orient_t orient =
+                        leveling_orient_from_front((leveling_front_t)wifi_mgr_get_orient());
+                    leveling_result_t guide =
+                        leveling_compute(roll_rel, pitch_rel,
+                                         trackwidth_in, wheelbase_in,
+                                         (leveling_mode_t)wifi_mgr_get_mode(),
+                                         orient);
+                    ui_update_guidance(&guide);
+                    wifi_mgr_update_guidance(&guide);
+                    mqtt_mgr_update_guidance(&guide);
 
                     // Publish values to web status + MQTT (same filtered data).
                     wifi_mgr_update_angles(roll_rel, pitch_rel);
