@@ -60,7 +60,6 @@ static lv_obj_t *s_guide_mode_btn = NULL;
 static lv_obj_t *s_guide_status = NULL;
 static lv_obj_t *s_guide_corner[4] = {NULL,NULL,NULL,NULL};
 static lv_obj_t *s_guide_back_btn = NULL;
-static bool s_guide_visible = false;
 static leveling_result_t s_guide_last;
 
 // Last raw angles received from IMU (before applying offsets)
@@ -559,7 +558,6 @@ void ui_show_rollback_warning(void)
 
 static void ui_guide_set_visible(bool visible)
 {
-    s_guide_visible = visible;
     if (s_guide_screen) {
         if (visible) {
             lv_obj_clear_flag(s_guide_screen, LV_OBJ_FLAG_HIDDEN);
@@ -577,6 +575,9 @@ static void guide_mode_event_cb(lv_event_t *e)
 {
     (void)e;
     unsigned char m = wifi_mgr_get_mode() == 0 ? 1 : 0;
+    // NOTE: set_mode performs a blocking NVS commit on the LVGL thread (matches
+    // the existing zero-hold / volume-save pattern). Acceptable for an occasional
+    // user toggle; could be deferred to a background task if it becomes a problem.
     wifi_mgr_set_mode(m);
     if (s_guide_mode_btn) {
         lv_obj_t *lbl = (lv_obj_t *)lv_obj_get_user_data(s_guide_mode_btn);
@@ -901,10 +902,12 @@ void ui_update_guidance(const leveling_result_t *g)
             snprintf(buf, sizeof(buf), "%.1f\"", lift);
             lv_label_set_text(s_guide_corner[i], buf);
         }
-        lv_color_t c = lift <= 0.1f ? lv_color_hex(0x39D98A)
-                      : lift <= 1.0f ? lv_color_hex(0xF2C94C)
-                      : lv_color_hex(0xEB5757);
-        lv_obj_set_style_text_color(s_guide_corner[i], c, 0);
+        if (!ramps) {
+            lv_color_t c = lift <= 0.1f ? lv_color_hex(0x39D98A)
+                          : lift <= 1.0f ? lv_color_hex(0xF2C94C)
+                          : lv_color_hex(0xEB5757);
+            lv_obj_set_style_text_color(s_guide_corner[i], c, 0);
+        }
     }
 
     if (!s_guide_status) return;
