@@ -209,7 +209,7 @@ static void mqtt_pub_disc_binary(const char *config_topic, const char *name,
         "\"availability_topic\":\"%s\","
         "\"payload_available\":\"online\","
         "\"payload_not_available\":\"offline\","
-        "\"value_template\":\"{{ value_json.%s }}\","
+        "\"value_template\":\"{{ value_json.%s | lower }}\","
         "\"payload_on\":\"true\",\"payload_off\":\"false\""
         "%s,%s}",
         name, s_device_id, uniq_suffix, s_state_topic, s_availability_topic,
@@ -217,7 +217,7 @@ static void mqtt_pub_disc_binary(const char *config_topic, const char *name,
     if (len > 0 && len < (int)sizeof(payload)) {
         esp_mqtt_client_publish(s_client, config_topic, payload, 0, 1, 1);
     } else {
-        ESP_LOGW(TAG, "binary discovery overflow for '%s' (%d)", name, len);
+        ESP_LOGW(TAG, "binary discovery overflow for '%s' (%d bytes)", name, len);
     }
 }
 
@@ -387,6 +387,11 @@ static void mqtt_mgr_publish_state(void)
                        "\"rssi\":%d,"
                        "\"ip\":\"%s\","
                        "\"mode\":\"STA\","
+                       /* Guidance fields in state JSON. lift_fl/fr/rl/rr and is_level have HA
+                          discovery entities; lvl_mode/ramp_target/ramp_remaining are published for
+                          advanced template sensors only (no discovery entity in v1). Lift values
+                          rely on vehicle dimensions, which default to non-zero, so guidance is
+                          effectively always available once the IMU loop runs. */
                        "\"lift_fl\":%.1f,\"lift_fr\":%.1f,"
                        "\"lift_rl\":%.1f,\"lift_rr\":%.1f,"
                        "\"is_level\":%s,"
