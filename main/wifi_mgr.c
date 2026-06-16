@@ -1928,7 +1928,7 @@ static esp_err_t http_status_get(httpd_req_t *req)
     );
     /* Guidance JS — wrapped in DOMContentLoaded since guideCard is in a later chunk */
     send_chunk(req,
-        "<script>document.addEventListener('DOMContentLoaded',function(){"
+        "<script>"
         "function fmt(v){return (v<0.05?'0':v.toFixed(1)+'\"');}"
         "function paint(d){"
         "var r=d.lvl_mode==='ramps';"
@@ -1947,13 +1947,14 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "s='Raise '+cn[d.worst_corner]+' first';}"
         "document.getElementById('gStatus').textContent=s;}"
         "window.__paintGuide=paint;"
-        "});"
         "function toggleMode(){"
         "fetch('/status.json').then(function(r){return r.json();}).then(function(d){"
         "var nm=d.lvl_mode==='ramps'?'blocks':'ramps';"
-        "fetch('/leveling_mode',{method:'POST',"
+        "return fetch('/leveling_mode',{method:'POST',"
         "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-        "body:'csrf_token='+encodeURIComponent(_csrf)+'&mode='+nm});});}"
+        "body:'csrf_token='+encodeURIComponent(_csrf)+'&mode='+nm});})"
+        ".then(function(){if(window._pollGuide)window._pollGuide();})"
+        "['catch'](function(){});}"
         "</script>"
     );
 
@@ -2220,12 +2221,12 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "else{clearInterval(_logTimer);_logTimer=null;}}"
         "ll.addEventListener('change',_logToggle);"
         "_logToggle();});"
-        "function _pollGuide(){"
+        "window._pollGuide=function(){"
         "fetch('/status.json').then(function(r){return r.json();})"
         ".then(function(d){if(window.__paintGuide)window.__paintGuide(d);})"
         "['catch'](function(){});}"
         "document.addEventListener('DOMContentLoaded',function(){"
-        "_pollGuide();setInterval(_pollGuide,2000);});"
+        "window._pollGuide();setInterval(window._pollGuide,2000);});"
         "</script>"
         "</details></div></div>"
     );
@@ -3091,12 +3092,7 @@ static esp_err_t http_wizard_orient_post(httpd_req_t *req)
     free(body);
     int o = atoi(ov);
     if (o < 0 || o > 3) o = 0;
-    s_lvl_orient = (unsigned char)o;   // update in-RAM value immediately (no stale read)
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_u8(h, NVS_KEY_LVL_ORIENT, (uint8_t)o);
-        nvs_commit(h); nvs_close(h);
-    }
+    wifi_mgr_set_orient((unsigned char)o);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
@@ -3803,6 +3799,26 @@ void wifi_mgr_set_mode(unsigned char mode)
     if (err != ESP_OK) ESP_LOGW(TAG, "set_mode: nvs_set_u8 failed: %s", esp_err_to_name(err));
     err = nvs_commit(h);
     if (err != ESP_OK) ESP_LOGW(TAG, "set_mode: nvs_commit failed: %s", esp_err_to_name(err));
+    nvs_close(h);
+}
+
+void wifi_mgr_set_orient(unsigned char orient)
+{
+    if (orient > 3) {
+        ESP_LOGW(TAG, "set_orient: invalid orient %u, clamping to TOP", orient);
+        orient = 0;
+    }
+    s_lvl_orient = orient;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set_orient: nvs_open failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = nvs_set_u8(h, NVS_KEY_LVL_ORIENT, orient);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_orient: nvs_set_u8 failed: %s", esp_err_to_name(err));
+    err = nvs_commit(h);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_orient: nvs_commit failed: %s", esp_err_to_name(err));
     nvs_close(h);
 }
 
