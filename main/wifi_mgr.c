@@ -289,8 +289,8 @@ static vprintf_like_t s_orig_vprintf = NULL;
 /* ---------------- vehicle config cache ---------------- */
 static char s_wheelbase_in[16] = {0};
 static char s_trackwidth_in[16] = {0};
-static unsigned char s_lvl_orient = 0; // ORIENT_FRONT_TOP
-static unsigned char s_lvl_mode   = 0; // LEVEL_MODE_BLOCKS
+static volatile unsigned char s_lvl_orient = 0; // ORIENT_FRONT_TOP
+static volatile unsigned char s_lvl_mode   = 0; // LEVEL_MODE_BLOCKS
 static float s_wheelbase_val = 133.0f;
 static float s_trackwidth_val = 65.2f;
 static uint32_t s_screen_timeout_s = 60;
@@ -610,6 +610,22 @@ static bool nvs_load_screen_timeout(uint32_t *timeout_s_out)
     return true;
 }
 
+// Load leveling orientation/mode from NVS, clamping to valid ranges.
+static void nvs_load_leveler(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_LEVELER, NVS_READONLY, &h) != ESP_OK) return;
+    uint8_t v = 0;
+    if (nvs_get_u8(h, NVS_KEY_LVL_ORIENT, &v) == ESP_OK) {
+        s_lvl_orient = (v > 3) ? 0 : v;   // leveling_front_t is 0..3
+    }
+    v = 0;
+    if (nvs_get_u8(h, NVS_KEY_LVL_MODE, &v) == ESP_OK) {
+        s_lvl_mode = (v > 1) ? 0 : v;     // leveling_mode_t is 0..1
+    }
+    nvs_close(h);
+}
+
 // Persist Wi-Fi credentials to NVS.
 static esp_err_t nvs_save_wifi(const char *ssid, const char *pass)
 {
@@ -766,6 +782,8 @@ static void nvs_factory_reset(void)
     if (nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h) == ESP_OK) {
         nvs_erase_key(h, NVS_KEY_ROLL0);
         nvs_erase_key(h, NVS_KEY_PITCH0);
+        nvs_erase_key(h, NVS_KEY_LVL_ORIENT);
+        nvs_erase_key(h, NVS_KEY_LVL_MODE);
         nvs_commit(h);
         nvs_close(h);
     }
@@ -3563,16 +3581,7 @@ esp_err_t wifi_mgr_init(void)
     (void)nvs_load_screen_timeout(&s_screen_timeout_s);
     s_wheelbase_val = parse_or_default(s_wheelbase_in, 133.0f);
     s_trackwidth_val = parse_or_default(s_trackwidth_in, 65.2f);
-    {
-        nvs_handle_t h;
-        if (nvs_open(NVS_NS_LEVELER, NVS_READONLY, &h) == ESP_OK) {
-            uint8_t v = 0;
-            if (nvs_get_u8(h, NVS_KEY_LVL_ORIENT, &v) == ESP_OK) s_lvl_orient = v;
-            v = 0;
-            if (nvs_get_u8(h, NVS_KEY_LVL_MODE, &v) == ESP_OK) s_lvl_mode = v;
-            nvs_close(h);
-        }
-    }
+    nvs_load_leveler();
     mqtt_mgr_set_vehicle_config(s_wheelbase_val, s_trackwidth_val);
     lvgl_port_set_screen_timeout_ms(s_screen_timeout_s * 1000U);
 
@@ -3611,14 +3620,22 @@ unsigned char wifi_mgr_get_mode(void)   { return s_lvl_mode; }
 
 void wifi_mgr_set_mode(unsigned char mode)
 {
-    if (mode > 1) mode = 0;
+    if (mode > 1) {
+        ESP_LOGW(TAG, "set_mode: invalid mode %u, clamping to BLOCKS", mode);
+        mode = 0;
+    }
     s_lvl_mode = mode;
     nvs_handle_t h;
-    if (nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_u8(h, NVS_KEY_LVL_MODE, mode);
-        nvs_commit(h);
-        nvs_close(h);
+    esp_err_t err = nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set_mode: nvs_open failed: %s", esp_err_to_name(err));
+        return;
     }
+    err = nvs_set_u8(h, NVS_KEY_LVL_MODE, mode);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_mode: nvs_set_u8 failed: %s", esp_err_to_name(err));
+    err = nvs_commit(h);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_mode: nvs_commit failed: %s", esp_err_to_name(err));
+    nvs_close(h);
 }
 
 // Update latest filtered angles for status endpoints.
