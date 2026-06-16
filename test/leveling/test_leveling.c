@@ -45,12 +45,28 @@ static void test_block_lifts(void)
     assert(near(r.max_lift_in, 5.25f));
     // worst corner is one of the two low (right) corners
     assert(r.worst_corner == CORNER_FR || r.worst_corner == CORNER_RR);
+    assert(r.is_level == false);
 
     // Perfectly level -> all zero.
     leveling_result_t z = leveling_compute(0.0f, 0.0f, 60.0f, 120.0f,
                                            LEVEL_MODE_BLOCKS, o);
     assert(near(z.corner_lift_in[CORNER_FL], 0.0f));
+    assert(near(z.corner_lift_in[CORNER_FR], 0.0f));
+    assert(near(z.corner_lift_in[CORNER_RL], 0.0f));
+    assert(near(z.corner_lift_in[CORNER_RR], 0.0f));
     assert(near(z.max_lift_in, 0.0f));
+    assert(z.is_level == true);
+
+    // Axis-swap: FRONT_LEFT makes device roll drive front/back tilt.
+    leveling_orient_t left = leveling_orient_from_front(ORIENT_FRONT_LEFT);
+    leveling_result_t s = leveling_compute(5.0f, 0.0f, 60.0f, 120.0f,
+                                           LEVEL_MODE_BLOCKS, left);
+    assert(s.guidance_available);
+    assert(near(s.corner_lift_in[CORNER_FL], 0.0f));
+    assert(near(s.corner_lift_in[CORNER_FR], 0.0f));
+    assert(near(s.corner_lift_in[CORNER_RL], 10.49f));
+    assert(near(s.corner_lift_in[CORNER_RR], 10.49f));
+    assert(near(s.max_lift_in, 10.49f));
 
     // Unset dimensions -> guidance unavailable.
     leveling_result_t u = leveling_compute(5.0f, 0.0f, 0.0f, 120.0f,
