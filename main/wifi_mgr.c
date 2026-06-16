@@ -2224,7 +2224,7 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "window._pollGuide=function(){"
         "fetch('/status.json').then(function(r){return r.json();})"
         ".then(function(d){if(window.__paintGuide)window.__paintGuide(d);})"
-        "['catch'](function(){});}"
+        "['catch'](function(){});};"
         "document.addEventListener('DOMContentLoaded',function(){"
         "window._pollGuide();setInterval(window._pollGuide,2000);});"
         "</script>"
