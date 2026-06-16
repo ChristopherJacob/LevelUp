@@ -5,6 +5,7 @@ idf_component_register(
     "lvgl_port.c"
     "ui.c"
     "imu_task.c"
+    "leveling.c"
     "i2c_bus.c"
     "expander.c"
 
