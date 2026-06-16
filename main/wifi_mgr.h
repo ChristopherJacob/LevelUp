@@ -19,3 +19,7 @@ float wifi_mgr_get_trackwidth_in(void);
 unsigned char wifi_mgr_get_orient(void);    // leveling_front_t value (0-3)
 unsigned char wifi_mgr_get_mode(void);      // leveling_mode_t value (0=blocks,1=ramps)
 void wifi_mgr_set_mode(unsigned char mode); // update + persist Blocks/Ramps
+
+#include "leveling.h"
+// Push latest leveling guidance for /status.
+void wifi_mgr_update_guidance(const leveling_result_t *g);
