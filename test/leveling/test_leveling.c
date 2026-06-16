@@ -74,10 +74,32 @@ static void test_block_lifts(void)
     assert(u.guidance_available == false);
 }
 
+static void test_ramp_dominant(void)
+{
+    leveling_orient_t o = leveling_orient_from_front(ORIENT_FRONT_TOP);
+
+    // Roll-dominant: big side tilt, tiny end tilt.
+    // left high 5deg, trackwidth 60 -> roll lift 60*tan5=5.25; pitch ~0.
+    leveling_result_t r = leveling_compute(5.0f, 0.2f, 60.0f, 120.0f,
+                                           LEVEL_MODE_RAMPS, o);
+    assert(r.ramp_axis_is_roll == true);
+    assert(r.ramp_lift_left == false);     // left is high -> ramp under RIGHT wheels
+    assert(near(r.ramp_target_in, 5.25f));
+    assert(near(r.ramp_remaining_in, 5.25f));
+
+    // Pitch-dominant: nose up 4deg, wheelbase 120 -> 120*tan4=8.39; roll tiny.
+    leveling_result_t p = leveling_compute(0.2f, 4.0f, 60.0f, 120.0f,
+                                           LEVEL_MODE_RAMPS, o);
+    assert(p.ramp_axis_is_roll == false);
+    assert(p.ramp_lift_front == false);    // front is high -> ramp under REAR wheels
+    assert(near(p.ramp_target_in, 8.39f));
+}
+
 int main(void)
 {
     test_orient_from_front();
     test_block_lifts();
+    test_ramp_dominant();
     printf("ALL TESTS PASSED\n");
     return 0;
 }

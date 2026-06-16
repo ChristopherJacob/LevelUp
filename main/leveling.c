@@ -72,5 +72,19 @@ leveling_result_t leveling_compute(float roll_deg, float pitch_deg,
         }
     }
 
+    // Ramp mode collapses to the single dominant axis.
+    float roll_lift  = fabsf(trackwidth_in * tan_left);   // lift to cancel side tilt
+    float pitch_lift = fabsf(wheelbase_in  * tan_front);  // lift to cancel end tilt
+    r.ramp_axis_is_roll = (roll_lift >= pitch_lift);
+    if (r.ramp_axis_is_roll) {
+        r.ramp_target_in = roll_lift;
+        // Lift the LOW side. left_high>0 means left is high -> lift right (left=false).
+        r.ramp_lift_left = (left_high_deg < 0.0f);
+    } else {
+        r.ramp_target_in = pitch_lift;
+        r.ramp_lift_front = (front_high_deg < 0.0f);
+    }
+    r.ramp_remaining_in = r.ramp_target_in;
+
     return r;
 }
