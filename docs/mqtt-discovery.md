@@ -28,7 +28,7 @@ LevelUp publishes Home Assistant MQTT auto-discovery payloads automatically.
   "lift_rl": 0.0,
   "lift_rr": 1.5,
   "is_level": false,
-  "lvl_mode": "blocks",
+  "ramp_axis": "roll",
   "ramp_target": 0.0,
   "ramp_remaining": 1.5
 }
@@ -84,17 +84,17 @@ entity in v1. They are available for use in manually configured Home Assistant
 
 | State Key | Description |
 |-----------|-------------|
-| `lvl_mode` | Active leveling mode: `"blocks"` or `"ramps"` |
+| `ramp_axis` | Dominant ramp axis: `"roll"` or `"pitch"` |
 | `ramp_target` | Target tilt angle for the ramp axis (degrees) |
 | `ramp_remaining` | Remaining inches to travel on the ramp to reach level |
 
-Example template sensor for `lvl_mode`:
+Example template sensor for `ramp_axis`:
 
 ```yaml
 template:
   - sensor:
-      - name: LevelUp Mode
-        state: "{{ states.sensor.levelup_state.attributes.lvl_mode | default('unknown') }}"
+      - name: LevelUp Ramp Axis
+        state: "{{ states.sensor.levelup_state.attributes.ramp_axis | default('unknown') }}"
 ```
 
 Or using an MQTT template sensor directly:
@@ -102,9 +102,9 @@ Or using an MQTT template sensor directly:
 ```yaml
 mqtt:
   sensor:
-    - name: LevelUp Mode
+    - name: LevelUp Ramp Axis
       state_topic: "levelup/<device_id>/state"
-      value_template: "{{ value_json.lvl_mode }}"
+      value_template: "{{ value_json.ramp_axis }}"
 ```
 
 ## Configuration

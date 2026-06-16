@@ -388,21 +388,21 @@ static void mqtt_mgr_publish_state(void)
                        "\"ip\":\"%s\","
                        "\"mode\":\"STA\","
                        /* Guidance fields in state JSON. lift_fl/fr/rl/rr and is_level have HA
-                          discovery entities; lvl_mode/ramp_target/ramp_remaining are published for
+                          discovery entities; ramp_axis/ramp_target/ramp_remaining are published for
                           advanced template sensors only (no discovery entity in v1). Lift values
                           rely on vehicle dimensions, which default to non-zero, so guidance is
                           effectively always available once the IMU loop runs. */
                        "\"lift_fl\":%.1f,\"lift_fr\":%.1f,"
                        "\"lift_rl\":%.1f,\"lift_rr\":%.1f,"
                        "\"is_level\":%s,"
-                       "\"lvl_mode\":\"%s\","
+                       "\"ramp_axis\":\"%s\","
                        "\"ramp_target\":%.1f,\"ramp_remaining\":%.1f"
                        "}",
                        roll, pitch, roll_in, pitch_in, ax, ay, az, rssi, ipbuf,
                        g.corner_lift_in[0], g.corner_lift_in[1],
                        g.corner_lift_in[2], g.corner_lift_in[3],
                        g.is_level ? "true" : "false",
-                       g.ramp_axis_is_roll ? "ramp_roll" : "ramp_pitch",
+                       g.ramp_axis_is_roll ? "roll" : "pitch",
                        g.ramp_target_in, g.ramp_remaining_in);
     if (len > 0) {
         esp_mqtt_client_publish(s_client, s_state_topic, payload, 0, 1, 1);
