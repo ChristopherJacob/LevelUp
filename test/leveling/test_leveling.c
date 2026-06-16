@@ -93,6 +93,30 @@ static void test_ramp_dominant(void)
     assert(p.ramp_axis_is_roll == false);
     assert(p.ramp_lift_front == false);    // front is high -> ramp under REAR wheels
     assert(near(p.ramp_target_in, 8.39f));
+
+    // Reversed signs: right side high -> ramp under LEFT wheels.
+    leveling_result_t rr = leveling_compute(-5.0f, 0.2f, 60.0f, 120.0f,
+                                            LEVEL_MODE_RAMPS, o);
+    assert(rr.ramp_axis_is_roll == true);
+    assert(rr.ramp_lift_left == true);
+    // Reversed signs: rear high -> ramp under FRONT wheels.
+    leveling_result_t pf = leveling_compute(0.2f, -4.0f, 60.0f, 120.0f,
+                                            LEVEL_MODE_RAMPS, o);
+    assert(pf.ramp_axis_is_roll == false);
+    assert(pf.ramp_lift_front == true);
+}
+
+static void test_level_threshold(void)
+{
+    leveling_orient_t top = leveling_orient_from_front(ORIENT_FRONT_TOP);
+    // Both axes within 0.5 deg -> level.
+    leveling_result_t l = leveling_compute(0.3f, -0.4f, 60.0f, 120.0f,
+                                           LEVEL_MODE_BLOCKS, top);
+    assert(l.is_level == true);
+    // One axis beyond 0.5 deg -> not level.
+    leveling_result_t nl = leveling_compute(0.3f, 1.0f, 60.0f, 120.0f,
+                                            LEVEL_MODE_BLOCKS, top);
+    assert(nl.is_level == false);
 }
 
 int main(void)
@@ -100,6 +124,7 @@ int main(void)
     test_orient_from_front();
     test_block_lifts();
     test_ramp_dominant();
+    test_level_threshold();
     printf("ALL TESTS PASSED\n");
     return 0;
 }

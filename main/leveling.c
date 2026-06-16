@@ -24,6 +24,8 @@ leveling_result_t leveling_compute(float roll_deg, float pitch_deg,
                                    leveling_orient_t orient)
 {
     leveling_result_t r = (leveling_result_t){0};
+    // Both block and ramp fields are always populated; callers select which to
+    // render via `mode`, so the parameter itself is intentionally unused here.
     (void)mode;
 
     if (trackwidth_in <= 0.0f || wheelbase_in <= 0.0f) {
@@ -75,7 +77,7 @@ leveling_result_t leveling_compute(float roll_deg, float pitch_deg,
     // Ramp mode collapses to the single dominant axis.
     float roll_lift  = fabsf(trackwidth_in * tan_left);   // lift to cancel side tilt
     float pitch_lift = fabsf(wheelbase_in  * tan_front);  // lift to cancel end tilt
-    r.ramp_axis_is_roll = (roll_lift >= pitch_lift);
+    r.ramp_axis_is_roll = (roll_lift >= pitch_lift); // roll wins on tie (side tilt is harder to ignore)
     if (r.ramp_axis_is_roll) {
         r.ramp_target_in = roll_lift;
         // Lift the LOW side. left_high>0 means left is high -> lift right (left=false).
