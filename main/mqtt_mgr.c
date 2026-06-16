@@ -22,6 +22,7 @@
 #include "nvs.h"
 
 #include "wifi_mgr.h"
+#include "leveling.h"
 #include "lwip/inet.h"
 
 static const char *TAG = "mqtt_mgr";
@@ -39,6 +40,7 @@ static float s_last_pitch = 0.0f;
 static float s_last_ax = 0.0f;
 static float s_last_ay = 0.0f;
 static float s_last_az = 0.0f;
+static leveling_result_t s_guide;
 
 static char s_device_id[32];
 static char s_state_topic[128];
@@ -51,6 +53,11 @@ static char s_discovery_pitch_in_topic[128];
 static char s_discovery_accel_x_topic[128];
 static char s_discovery_accel_y_topic[128];
 static char s_discovery_accel_z_topic[128];
+static char s_discovery_lift_fl_topic[128];
+static char s_discovery_lift_fr_topic[128];
+static char s_discovery_lift_rl_topic[128];
+static char s_discovery_lift_rr_topic[128];
+static char s_discovery_is_level_topic[128];
 
 static float s_wheelbase_in = 133.0f;
 static float s_trackwidth_in = 65.2f;
@@ -135,6 +142,16 @@ static void mqtt_mgr_build_topics(void)
              "%s/sensor/%s/accel_y/config", s_mqtt_disc, s_device_id);
     snprintf(s_discovery_accel_z_topic, sizeof(s_discovery_accel_z_topic),
              "%s/sensor/%s/accel_z/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_lift_fl_topic, sizeof(s_discovery_lift_fl_topic),
+             "%s/sensor/%s/lift_fl/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_lift_fr_topic, sizeof(s_discovery_lift_fr_topic),
+             "%s/sensor/%s/lift_fr/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_lift_rl_topic, sizeof(s_discovery_lift_rl_topic),
+             "%s/sensor/%s/lift_rl/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_lift_rr_topic, sizeof(s_discovery_lift_rr_topic),
+             "%s/sensor/%s/lift_rr/config", s_mqtt_disc, s_device_id);
+    snprintf(s_discovery_is_level_topic, sizeof(s_discovery_is_level_topic),
+             "%s/binary_sensor/%s/is_level/config", s_mqtt_disc, s_device_id);
 }
 
 // Publish a single HA MQTT discovery config entry (retained QoS-1).
@@ -175,6 +192,32 @@ static void mqtt_pub_disc_entity(const char *config_topic,
         esp_mqtt_client_publish(s_client, config_topic, payload, 0, 1, 1);
     } else {
         ESP_LOGW(TAG, "discovery payload overflow for '%s' (%d bytes)", name, len);
+    }
+}
+
+// Publish a binary_sensor discovery entry (ON/OFF payloads).
+static void mqtt_pub_disc_binary(const char *config_topic, const char *name,
+                                 const char *uniq_suffix, const char *value_key,
+                                 const char *opt, const char *dev_block)
+{
+    char payload[640];
+    int len = snprintf(payload, sizeof(payload),
+        "{"
+        "\"name\":\"%s\","
+        "\"uniq_id\":\"%s_%s\","
+        "\"state_topic\":\"%s\","
+        "\"availability_topic\":\"%s\","
+        "\"payload_available\":\"online\","
+        "\"payload_not_available\":\"offline\","
+        "\"value_template\":\"{{ value_json.%s }}\","
+        "\"payload_on\":\"true\",\"payload_off\":\"false\""
+        "%s,%s}",
+        name, s_device_id, uniq_suffix, s_state_topic, s_availability_topic,
+        value_key, opt, dev_block);
+    if (len > 0 && len < (int)sizeof(payload)) {
+        esp_mqtt_client_publish(s_client, config_topic, payload, 0, 1, 1);
+    } else {
+        ESP_LOGW(TAG, "binary discovery overflow for '%s' (%d)", name, len);
     }
 }
 
@@ -265,6 +308,25 @@ static void mqtt_mgr_publish_discovery(void)
                          "\"suggested_display_precision\":3",
                          dev);
 
+    mqtt_pub_disc_entity(s_discovery_lift_fl_topic, "LevelUp Lift Front-Left", "lift_fl",
+                         "lift_fl", "in",
+                         ",\"icon\":\"mdi:format-vertical-align-up\","
+                         "\"suggested_display_precision\":1", dev);
+    mqtt_pub_disc_entity(s_discovery_lift_fr_topic, "LevelUp Lift Front-Right", "lift_fr",
+                         "lift_fr", "in",
+                         ",\"icon\":\"mdi:format-vertical-align-up\","
+                         "\"suggested_display_precision\":1", dev);
+    mqtt_pub_disc_entity(s_discovery_lift_rl_topic, "LevelUp Lift Rear-Left", "lift_rl",
+                         "lift_rl", "in",
+                         ",\"icon\":\"mdi:format-vertical-align-up\","
+                         "\"suggested_display_precision\":1", dev);
+    mqtt_pub_disc_entity(s_discovery_lift_rr_topic, "LevelUp Lift Rear-Right", "lift_rr",
+                         "lift_rr", "in",
+                         ",\"icon\":\"mdi:format-vertical-align-up\","
+                         "\"suggested_display_precision\":1", dev);
+    mqtt_pub_disc_binary(s_discovery_is_level_topic, "LevelUp Is Level", "is_level",
+                         "is_level", ",\"icon\":\"mdi:car-lifted-pickup\"", dev);
+
     ESP_LOGI(TAG, "HA discovery published (%s)", ipbuf[0] ? ipbuf : "no IP");
 }
 
@@ -282,6 +344,7 @@ static void mqtt_mgr_publish_state(void)
     float pitch;
     float ax, ay, az;
     float trackwidth_in, wheelbase_in;
+    leveling_result_t g;
     portENTER_CRITICAL(&s_angle_mux);
     roll = s_last_roll;
     pitch = s_last_pitch;
@@ -290,6 +353,7 @@ static void mqtt_mgr_publish_state(void)
     az = s_last_az;
     trackwidth_in = s_trackwidth_in;
     wheelbase_in  = s_wheelbase_in;
+    g = s_guide;
     portEXIT_CRITICAL(&s_angle_mux);
 
     int rssi = 0;
@@ -310,7 +374,7 @@ static void mqtt_mgr_publish_state(void)
         }
     }
 
-    char payload[256];
+    char payload[384];
     int len = snprintf(payload, sizeof(payload),
                        "{"
                        "\"roll_deg\":%.3f,"
@@ -322,9 +386,19 @@ static void mqtt_mgr_publish_state(void)
                        "\"accel_z\":%.4f,"
                        "\"rssi\":%d,"
                        "\"ip\":\"%s\","
-                       "\"mode\":\"STA\""
+                       "\"mode\":\"STA\","
+                       "\"lift_fl\":%.1f,\"lift_fr\":%.1f,"
+                       "\"lift_rl\":%.1f,\"lift_rr\":%.1f,"
+                       "\"is_level\":%s,"
+                       "\"lvl_mode\":\"%s\","
+                       "\"ramp_target\":%.1f,\"ramp_remaining\":%.1f"
                        "}",
-                       roll, pitch, roll_in, pitch_in, ax, ay, az, rssi, ipbuf);
+                       roll, pitch, roll_in, pitch_in, ax, ay, az, rssi, ipbuf,
+                       g.corner_lift_in[0], g.corner_lift_in[1],
+                       g.corner_lift_in[2], g.corner_lift_in[3],
+                       g.is_level ? "true" : "false",
+                       g.ramp_axis_is_roll ? "ramp_roll" : "ramp_pitch",
+                       g.ramp_target_in, g.ramp_remaining_in);
     if (len > 0) {
         esp_mqtt_client_publish(s_client, s_state_topic, payload, 0, 1, 1);
     }
@@ -499,6 +573,15 @@ void mqtt_mgr_update_accel(float ax, float ay, float az)
     s_last_ax = ax;
     s_last_ay = ay;
     s_last_az = az;
+    portEXIT_CRITICAL(&s_angle_mux);
+}
+
+// Update latest leveling guidance for the publish loop.
+void mqtt_mgr_update_guidance(const leveling_result_t *g)
+{
+    if (!g) return;
+    portENTER_CRITICAL(&s_angle_mux);
+    s_guide = *g;
     portEXIT_CRITICAL(&s_angle_mux);
 }
 
