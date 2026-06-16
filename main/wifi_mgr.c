@@ -222,6 +222,8 @@ static const size_t s_favicon_png_len = sizeof(s_favicon_png);
 #define NVS_NS_CONFIG       "config"
 #define NVS_KEY_WHEELBASE   "wheelbase_in"
 #define NVS_KEY_TRACKWIDTH  "trackwidth_in"
+#define NVS_KEY_LVL_ORIENT  "lvl_orient"
+#define NVS_KEY_LVL_MODE    "lvl_mode"
 #define NVS_KEY_SCREEN_TO   "screen_to_s"
 
 /* ---------------- AP defaults ---------------- */
@@ -287,6 +289,8 @@ static vprintf_like_t s_orig_vprintf = NULL;
 /* ---------------- vehicle config cache ---------------- */
 static char s_wheelbase_in[16] = {0};
 static char s_trackwidth_in[16] = {0};
+static unsigned char s_lvl_orient = 0; // ORIENT_FRONT_TOP
+static unsigned char s_lvl_mode   = 0; // LEVEL_MODE_BLOCKS
 static float s_wheelbase_val = 133.0f;
 static float s_trackwidth_val = 65.2f;
 static uint32_t s_screen_timeout_s = 60;
@@ -3559,6 +3563,16 @@ esp_err_t wifi_mgr_init(void)
     (void)nvs_load_screen_timeout(&s_screen_timeout_s);
     s_wheelbase_val = parse_or_default(s_wheelbase_in, 133.0f);
     s_trackwidth_val = parse_or_default(s_trackwidth_in, 65.2f);
+    {
+        nvs_handle_t h;
+        if (nvs_open(NVS_NS_LEVELER, NVS_READONLY, &h) == ESP_OK) {
+            uint8_t v = 0;
+            if (nvs_get_u8(h, NVS_KEY_LVL_ORIENT, &v) == ESP_OK) s_lvl_orient = v;
+            v = 0;
+            if (nvs_get_u8(h, NVS_KEY_LVL_MODE, &v) == ESP_OK) s_lvl_mode = v;
+            nvs_close(h);
+        }
+    }
     mqtt_mgr_set_vehicle_config(s_wheelbase_val, s_trackwidth_val);
     lvgl_port_set_screen_timeout_ms(s_screen_timeout_s * 1000U);
 
@@ -3590,6 +3604,21 @@ float wifi_mgr_get_wheelbase_in(void)
 float wifi_mgr_get_trackwidth_in(void)
 {
     return s_trackwidth_val;
+}
+
+unsigned char wifi_mgr_get_orient(void) { return s_lvl_orient; }
+unsigned char wifi_mgr_get_mode(void)   { return s_lvl_mode; }
+
+void wifi_mgr_set_mode(unsigned char mode)
+{
+    if (mode > 1) mode = 0;
+    s_lvl_mode = mode;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, NVS_KEY_LVL_MODE, mode);
+        nvs_commit(h);
+        nvs_close(h);
+    }
 }
 
 // Update latest filtered angles for status endpoints.
