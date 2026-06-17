@@ -38,28 +38,50 @@ class LevelUpBubbleCard extends HTMLElement {
 
   _build() {
     const { title, size } = this._config;
+    const s = size;
+    
     this.innerHTML = `
+      <style>
+        :host { display:block }
+        .lbc-wrap { display:flex;flex-direction:column;align-items:center;padding:16px 8px;gap:8px;box-sizing:border-box }
+        .lbc-t { font-size:13px;font-weight:600;color:var(--secondary-text-color);text-transform:uppercase;letter-spacing:0.5px }
+        .lbc-ring { position:relative;width:${s}px;height:${s}px }
+        .lbc-svg { width:100%;height:100%;display:block }
+        .lbc-ring-o { fill:none;stroke:var(--divider-color,#333);stroke-width:2 }
+        .lbc-ring-i { fill:none;stroke:var(--divider-color,#333);stroke-width:1;opacity:0.5 }
+        .lbc-x { stroke:var(--divider-color,#333);stroke-width:0.5;opacity:0.4 }
+        .lbc-tick { stroke:var(--divider-color,#333);stroke-width:1;opacity:0.3 }
+        .lbc-c { fill:var(--secondary-text-color,#666);opacity:0.25 }
+        .lbc-b { fill:var(--primary-color,#1f6feb);filter:drop-shadow(0 0 6px rgba(31,111,235,0.5));transition:cx 0.12s linear,cy 0.12s linear,fill 0.5s ease,filter 0.5s ease }
+        .lbc-b.lvl { fill:#34c759;filter:drop-shadow(0 0 10px rgba(52,199,89,0.6)) }
+        .lbc-s { font-size:13px;font-weight:600;color:var(--secondary-text-color);letter-spacing:0.5px;transition:color 0.4s }
+        .lbc-s.lvl { color:#34c759 }
+        .lbc-v { display:flex;gap:20px }
+        .lbc-vi { display:flex;flex-direction:column;align-items:center }
+        .lbc-vl { font-size:9px;color:var(--secondary-text-color);opacity:0.5;text-transform:uppercase }
+        .lbc-vn { font-family:monospace;font-size:16px;font-weight:500;color:var(--primary-text-color) }
+      </style>
       <ha-card>
-        <div style="display:flex;flex-direction:column;align-items:center;padding:16px;gap:8px">
-          ${title ? `<div class="lbc-title">${title}</div>` : ''}
-          <div class="lbc-ring-wrap" style="width:${size}px;height:${size}px">
+        <div class="lbc-wrap">
+          ${title ? `<div class="lbc-t">${title}</div>` : ''}
+          <div class="lbc-ring">
             <svg class="lbc-svg" viewBox="-120 -120 240 240">
-              <circle cx="0" cy="0" r="105" class="lbc-ring-outer"/>
-              <circle cx="0" cy="0" r="95" class="lbc-ring-inner"/>
-              <line x1="0" y1="-98" x2="0" y2="98" class="lbc-crosshair"/>
-              <line x1="-98" y1="0" x2="98" y2="0" class="lbc-crosshair"/>
-              <g class="lbc-tick">
-                <line x1="0" y1="-95" x2="0" y2="-88" /><line x1="0" y1="95" x2="0" y2="88"/>
-                <line x1="-95" y1="0" x2="-88" y2="0" /><line x1="95" y1="0" x2="88" y2="0"/>
-              </g>
-              <circle cx="0" cy="0" r="3" class="lbc-center"/>
-              <circle cx="0" cy="0" r="16" class="lbc-bubble" id="bubble"/>
+              <circle cx="0" cy="0" r="105" class="lbc-ring-o"/>
+              <circle cx="0" cy="0" r="95" class="lbc-ring-i"/>
+              <line x1="0" y1="-98" x2="0" y2="98" class="lbc-x"/>
+              <line x1="-98" y1="0" x2="98" y2="0" class="lbc-x"/>
+              <line x1="0" y1="-95" x2="0" y2="-88" class="lbc-tick"/>
+              <line x1="0" y1="95" x2="0" y2="88" class="lbc-tick"/>
+              <line x1="-95" y1="0" x2="-88" y2="0" class="lbc-tick"/>
+              <line x1="95" y1="0" x2="88" y2="0" class="lbc-tick"/>
+              <circle cx="0" cy="0" r="3" class="lbc-c"/>
+              <circle cx="0" cy="0" r="16" class="lbc-b"/>
             </svg>
           </div>
-          <div class="lbc-status" id="status">--</div>
-          <div class="lbc-values">
-            <div class="lbc-val"><span class="lbc-vlabel">Roll</span><span class="lbc-vnum" id="rval">--°</span></div>
-            <div class="lbc-val"><span class="lbc-vlabel">Pitch</span><span class="lbc-vnum" id="pval">--°</span></div>
+          <div class="lbc-s">--</div>
+          <div class="lbc-v">
+            <div class="lbc-vi"><span class="lbc-vl">Roll</span><span class="lbc-vn">--°</span></div>
+            <div class="lbc-vi"><span class="lbc-vl">Pitch</span><span class="lbc-vn">--°</span></div>
           </div>
         </div>
       </ha-card>
@@ -67,10 +89,9 @@ class LevelUpBubbleCard extends HTMLElement {
   }
 
   _update(roll, pitch) {
-    const bubble = this.querySelector('#bubble');
-    const status = this.querySelector('#status');
-    const rval = this.querySelector('#rval');
-    const pval = this.querySelector('#pval');
+    const bubble = this.querySelector('.lbc-b');
+    const status = this.querySelector('.lbc-s');
+    const vals = this.querySelectorAll('.lbc-vn');
     if (!bubble) return;
 
     const { tolerance, multiplier } = this._config;
@@ -81,41 +102,18 @@ class LevelUpBubbleCard extends HTMLElement {
 
     bubble.setAttribute('cx', bx);
     bubble.setAttribute('cy', by);
-    bubble.classList.toggle('lbc-level', isLevel);
+    bubble.classList.toggle('lvl', isLevel);
 
-    status.textContent = isLevel ? '● LEVEL' : `○ ${Math.max(Math.abs(roll), Math.abs(pitch)).toFixed(1)}°`;
-    status.className = 'lbc-status' + (isLevel ? ' lbc-level' : '');
+    status.textContent = isLevel ? '● LEVEL' : `○ ${Math.max(Math.abs(roll), Math.abs(pitch)).toFixed(1)}° off`;
+    status.classList.toggle('lvl', isLevel);
 
-    rval.textContent = roll.toFixed(1) + '°';
-    pval.textContent = pitch.toFixed(1) + '°';
+    if (vals.length >= 2) {
+      vals[0].textContent = roll.toFixed(1) + '°';
+      vals[1].textContent = pitch.toFixed(1) + '°';
+    }
   }
 
   getCardSize() { return 3; }
 }
 
 customElements.define('levelup-bubble-card', LevelUpBubbleCard);
-
-// Styles injected once
-if (!document.getElementById('lbc-styles')) {
-  const s = document.createElement('style');
-  s.id = 'lbc-styles';
-  s.textContent = `
-    .lbc-title { font-size:13px;font-weight:600;color:var(--secondary-text-color);text-transform:uppercase;letter-spacing:0.5px }
-    .lbc-ring-wrap { position:relative }
-    .lbc-svg { width:100%;height:100% }
-    .lbc-ring-outer { fill:none;stroke:var(--divider-color, rgba(128,128,128,0.15));stroke-width:2 }
-    .lbc-ring-inner { fill:none;stroke:var(--divider-color, rgba(128,128,128,0.08));stroke-width:1 }
-    .lbc-crosshair { stroke:var(--divider-color, rgba(128,128,128,0.06));stroke-width:0.5 }
-    .lbc-tick line { stroke:var(--divider-color, rgba(128,128,128,0.1));stroke-width:1 }
-    .lbc-center { fill:var(--secondary-text-color);opacity:0.2 }
-    .lbc-bubble { fill:var(--primary-color, #1f6feb);filter:drop-shadow(0 0 6px rgba(31,111,235,0.5));transition:cx 0.12s linear,cy 0.12s linear,fill 0.5s ease,filter 0.5s ease }
-    .lbc-bubble.lbc-level { fill:#34c759;filter:drop-shadow(0 0 10px rgba(52,199,89,0.6)) }
-    .lbc-status { font-size:13px;font-weight:600;color:var(--secondary-text-color);letter-spacing:0.5px;transition:color 0.4s }
-    .lbc-status.lbc-level { color:#34c759 }
-    .lbc-values { display:flex;gap:20px }
-    .lbc-val { display:flex;flex-direction:column;align-items:center }
-    .lbc-vlabel { font-size:9px;color:var(--secondary-text-color);opacity:0.5;text-transform:uppercase }
-    .lbc-vnum { font-family:monospace;font-size:16px;font-weight:500;color:var(--primary-text-color) }
-  `;
-  document.head.appendChild(s);
-}
