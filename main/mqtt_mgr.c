@@ -229,6 +229,32 @@ static void mqtt_pub_disc_binary(const char *config_topic, const char *name,
     }
 }
 
+// Publish a button discovery entry (stateless action; command_topic + payload_press).
+static void mqtt_pub_disc_button(const char *config_topic, const char *name,
+                                 const char *uniq_suffix, const char *cmd_topic,
+                                 const char *payload_press, const char *opt,
+                                 const char *dev_block)
+{
+    char payload[640];
+    int len = snprintf(payload, sizeof(payload),
+        "{"
+        "\"name\":\"%s\","
+        "\"uniq_id\":\"%s_%s\","
+        "\"command_topic\":\"%s\","
+        "\"payload_press\":\"%s\","
+        "\"availability_topic\":\"%s\","
+        "\"payload_available\":\"online\","
+        "\"payload_not_available\":\"offline\""
+        "%s,%s}",
+        name, s_device_id, uniq_suffix, cmd_topic, payload_press,
+        s_availability_topic, opt, dev_block);
+    if (len > 0 && len < (int)sizeof(payload)) {
+        esp_mqtt_client_publish(s_client, config_topic, payload, 0, 1, 1);
+    } else {
+        ESP_LOGW(TAG, "button discovery overflow for '%s' (%d bytes)", name, len);
+    }
+}
+
 // Publish Home Assistant MQTT discovery payloads (retained, QoS 1).
 // Entities appear automatically in HA without manual YAML config.
 static void mqtt_mgr_publish_discovery(void)
@@ -334,6 +360,9 @@ static void mqtt_mgr_publish_discovery(void)
                          "\"suggested_display_precision\":1", dev);
     mqtt_pub_disc_binary(s_discovery_is_level_topic, "LevelUp Is Level", "is_level",
                          "is_level", ",\"icon\":\"mdi:car-lifted-pickup\"", dev);
+    mqtt_pub_disc_button(s_discovery_zero_btn_topic, "LevelUp Set Zero", "zero",
+                         s_cmd_topic, "zero",
+                         ",\"icon\":\"mdi:crosshairs-gps\"", dev);
 
     ESP_LOGI(TAG, "HA discovery published (%s)", ipbuf[0] ? ipbuf : "no IP");
 }
