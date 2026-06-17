@@ -23,6 +23,8 @@
 
 #include "wifi_mgr.h"
 #include "leveling.h"
+#include "ui.h"
+#include "lvgl_port.h"
 #include "lwip/inet.h"
 
 static const char *TAG = "mqtt_mgr";
@@ -58,6 +60,8 @@ static char s_discovery_lift_fr_topic[128];
 static char s_discovery_lift_rl_topic[128];
 static char s_discovery_lift_rr_topic[128];
 static char s_discovery_is_level_topic[128];
+static char s_cmd_topic[128];
+static char s_discovery_zero_btn_topic[128];
 
 static float s_wheelbase_in = 133.0f;
 static float s_trackwidth_in = 65.2f;
@@ -152,6 +156,10 @@ static void mqtt_mgr_build_topics(void)
              "%s/sensor/%s/lift_rr/config", s_mqtt_disc, s_device_id);
     snprintf(s_discovery_is_level_topic, sizeof(s_discovery_is_level_topic),
              "%s/binary_sensor/%s/is_level/config", s_mqtt_disc, s_device_id);
+    snprintf(s_cmd_topic, sizeof(s_cmd_topic),
+             "%s/%s/cmd", s_mqtt_topic, s_device_id);
+    snprintf(s_discovery_zero_btn_topic, sizeof(s_discovery_zero_btn_topic),
+             "%s/button/%s/zero/config", s_mqtt_disc, s_device_id);
 }
 
 // Publish a single HA MQTT discovery config entry (retained QoS-1).
@@ -437,6 +445,7 @@ static void mqtt_mgr_handle_event(void *handler_args, esp_event_base_t base, int
     if (event_id == MQTT_EVENT_CONNECTED) {
         xEventGroupSetBits(s_mqtt_events, MQTT_CONNECTED_BIT);
         esp_mqtt_client_publish(s_client, s_availability_topic, "online", 0, 1, 1);
+        esp_mqtt_client_subscribe(s_client, s_cmd_topic, 1);
         mqtt_mgr_publish_discovery();
         ESP_LOGI(TAG, "MQTT connected");
         return;
@@ -445,6 +454,26 @@ static void mqtt_mgr_handle_event(void *handler_args, esp_event_base_t base, int
     if (event_id == MQTT_EVENT_DISCONNECTED) {
         xEventGroupClearBits(s_mqtt_events, MQTT_CONNECTED_BIT);
         ESP_LOGW(TAG, "MQTT disconnected");
+    }
+
+    if (event_id == MQTT_EVENT_DATA) {
+        esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
+        if (event && event->topic && event->data &&
+            event->topic_len == (int)strlen(s_cmd_topic) &&
+            strncmp(event->topic, s_cmd_topic, event->topic_len) == 0) {
+            if (event->data_len == 4 && strncmp(event->data, "zero", 4) == 0) {
+                if (lvgl_port_lock(1000)) {
+                    ui_zero_current();
+                    lvgl_port_unlock();
+                    ESP_LOGI(TAG, "zeroed via MQTT cmd");
+                } else {
+                    ESP_LOGW(TAG, "zero cmd: LVGL lock timeout, skipped");
+                }
+            } else {
+                ESP_LOGW(TAG, "ignoring unknown cmd payload (%d bytes)", event->data_len);
+            }
+        }
+        return;
     }
 }
 
