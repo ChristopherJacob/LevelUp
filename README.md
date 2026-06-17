@@ -28,6 +28,9 @@ See [docs/building.md](docs/building.md) for ESP-IDF build instructions.
 On first boot, LevelUp creates a WiFi access point. Connect to it and configure your
 van's network credentials through the captive portal or web dashboard.
 
+To switch networks later, use the **Reconfigure Wi-Fi** button on the `/status` page —
+it drops the device back into setup AP mode while preserving all other settings.
+
 ### 3. Point It at Your MQTT Broker
 
 Set your MQTT broker address in the device settings. Default: `mqtt://homeassistant.local:1883`

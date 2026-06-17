@@ -894,6 +894,7 @@ static esp_err_t http_network_save_post(httpd_req_t *req);
 static esp_err_t http_display_save_post(httpd_req_t *req);
 static esp_err_t http_leveling_mode_post(httpd_req_t *req);
 static esp_err_t http_wizard_orient_post(httpd_req_t *req);
+static esp_err_t http_wifi_setup_post(httpd_req_t *req);
 
 static void start_captive_portal(void)
 {
@@ -1320,6 +1321,92 @@ static esp_err_t http_config_save_post(httpd_req_t *req)
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, "<html><body><h3>Saved!</h3><p><a href='/status'>Back to status</a></p></body></html>");
+    return ESP_OK;
+}
+
+/* =========================================================
+ * HTTP: /wifi_setup (POST) — drop to AP setup mode, non-destructive
+ * ========================================================= */
+static volatile bool s_ap_switch_pending = false;
+
+// One-shot task: waits so the HTTP response reaches the browser, then switches
+// to AP mode. Runs on its own stack (start_ap() does wifi init + HTTP server +
+// captive portal, which is too deep for the shared esp_timer task stack).
+static void wifi_setup_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(750));
+    ESP_LOGW(TAG, "User requested Wi-Fi setup: switching to AP mode");
+    start_ap();
+    s_ap_switch_pending = false;
+    vTaskDelete(NULL);
+}
+
+static esp_err_t http_wifi_setup_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0 || total > 256) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad content length");
+        return ESP_OK;
+    }
+    char *body = (char *)calloc(1, (size_t)total + 1);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No mem");
+        return ESP_OK;
+    }
+    int rcvd = 0;
+    while (rcvd < total) {
+        int r = httpd_req_recv(req, body + rcvd, total - rcvd);
+        if (r <= 0) {
+            free(body);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+            return ESP_OK;
+        }
+        rcvd += r;
+    }
+    body[rcvd] = '\0';
+    if (!csrf_ok(body)) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF token invalid");
+        return ESP_OK;
+    }
+    free(body);
+
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    if (s_running_ap) {
+        httpd_resp_sendstr(req,
+            "<html><body style='font-family:system-ui;margin:40px'>"
+            "<h3>Already in setup mode.</h3>"
+            "<p>Connect to the <b>Leveler-XXXX</b> Wi-Fi and open the setup page.</p>"
+            "</body></html>");
+        return ESP_OK;
+    }
+
+    esp_err_t sret = httpd_resp_sendstr(req,
+        "<html><body style='font-family:system-ui;margin:40px'>"
+        "<h3>Switching to Wi-Fi setup mode\xe2\x80\xa6</h3>"
+        "<p>Connect your phone to the <b>Leveler-XXXX</b> Wi-Fi network "
+        "(password <code>leveler-setup</code>), then open the setup page "
+        "(the captive portal should appear automatically, or browse to "
+        "<a href='http://192.168.4.1'>http://192.168.4.1</a>).</p>"
+        "<p>Your other settings (MQTT, hostname, calibration, vehicle "
+        "dimensions) are preserved.</p>"
+        "</body></html>");
+
+    // Only switch if the client actually received the instructions.
+    if (sret != ESP_OK) {
+        return ESP_OK;
+    }
+
+    // Defer the AP switch (own task / stack) so the response is delivered first.
+    if (!s_ap_switch_pending) {
+        s_ap_switch_pending = true;
+        if (xTaskCreate(wifi_setup_task, "wifi_setup", 6144, NULL, 5, NULL) != pdPASS) {
+            ESP_LOGW(TAG, "wifi_setup task create failed; switching to AP now");
+            s_ap_switch_pending = false;
+            start_ap();
+        }
+    }
     return ESP_OK;
 }
 
@@ -2003,6 +2090,24 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<p class='muted'>Saving networking settings reboots the device.</p>"
         "<button type='submit'>Save Networking</button>"
         "</form>"
+    );
+    send_chunk(req,
+        "<div style='margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'>"
+        "<button type='button' "
+        "onclick=\"if(confirm('Switch to Wi-Fi setup mode? This device will leave "
+        "your network until reconfigured. Your other settings are kept.')){"
+        "fetch('/wifi_setup',{method:'POST',"
+        "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+        "body:'csrf_token='+encodeURIComponent(_csrf)})"
+        ".then(function(r){return r.text();})"
+        ".then(function(t){document.open();document.write(t);document.close();})"
+        "['catch'](function(){alert('Request failed');});}\">"
+        "Reconfigure Wi-Fi</button>"
+        "<div style='font-size:12px;color:var(--muted);margin-top:6px'>"
+        "Puts the device in setup mode so you can join a different network.</div>"
+        "</div>"
+    );
+    send_chunk(req,
         "</details>"
         "<details><summary>Display</summary>"
         "<form method='POST' action='/display_save'>"
@@ -3290,6 +3395,14 @@ static httpd_handle_t start_http_server(void)
         .user_ctx = NULL,
     };
     httpd_register_uri_handler(server, &leveling_mode);
+
+    httpd_uri_t wifi_setup = {
+        .uri = "/wifi_setup",
+        .method = HTTP_POST,
+        .handler = http_wifi_setup_post,
+        .user_ctx = NULL,
+    };
+    httpd_register_uri_handler(server, &wifi_setup);
 
     // Status
     httpd_uri_t status = {
