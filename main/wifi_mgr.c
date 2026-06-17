@@ -2090,6 +2090,24 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<p class='muted'>Saving networking settings reboots the device.</p>"
         "<button type='submit'>Save Networking</button>"
         "</form>"
+    );
+    send_chunk(req,
+        "<div style='margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'>"
+        "<button type='button' "
+        "onclick=\"if(confirm('Switch to Wi-Fi setup mode? This device will leave "
+        "your network until reconfigured. Your other settings are kept.')){"
+        "fetch('/wifi_setup',{method:'POST',"
+        "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+        "body:'csrf_token='+encodeURIComponent(_csrf)})"
+        ".then(function(r){return r.text();})"
+        ".then(function(t){document.open();document.write(t);document.close();})"
+        "['catch'](function(){alert('Request failed');});}\">"
+        "Reconfigure Wi-Fi</button>"
+        "<div style='font-size:12px;color:var(--muted);margin-top:6px'>"
+        "Puts the device in setup mode so you can join a different network.</div>"
+        "</div>"
+    );
+    send_chunk(req,
         "</details>"
         "<details><summary>Display</summary>"
         "<form method='POST' action='/display_save'>"
