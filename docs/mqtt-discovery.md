@@ -76,6 +76,21 @@ These four sensors are published via MQTT discovery and appear automatically in 
 |-------------|-----------|-------------|
 | `LevelUp Is Level` | `is_level` | `true` when all corners are within the level tolerance |
 
+### Buttons
+
+| Entity Name | Icon | Description |
+|-------------|------|-------------|
+| `LevelUp Set Zero` | `mdi:crosshairs-gps` | Sets the current orientation as the level reference (same as on-device hold-to-zero) |
+
+Pressing the **LevelUp Set Zero** button publishes the payload `zero` to the device's inbound
+command topic:
+
+```
+<topic_prefix>/<device_id>/cmd
+```
+
+This topic is the extensible inbound command path — currently only the `zero` payload is handled.
+
 ## Advanced / Template-Only Fields
 
 The following fields are present in the MQTT state JSON but do **not** have an auto-discovery
