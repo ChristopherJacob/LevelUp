@@ -1823,25 +1823,25 @@ static esp_err_t http_status_get(httpd_req_t *req)
     float pitch_in = tanf(pitch * DEG2RAD) * s_wheelbase_val;
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Left/right tilt in degrees — positive = right side high'>Roll</span></td>"
-        "<td>%.3f&deg;</td></tr>", roll);
+        "<td id='vRoll'>%.3f&deg;</td></tr>", roll);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Front/rear tilt in degrees — positive = nose high'>Pitch</span></td>"
-        "<td>%.3f&deg;</td></tr>", pitch);
+        "<td id='vPitch'>%.3f&deg;</td></tr>", pitch);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Lateral level offset at the axle based on trackwidth and roll angle'>Roll (in)</span></td>"
-        "<td>%.1f in</td></tr>", roll_in);
+        "<td id='vRollIn'>%.1f in</td></tr>", roll_in);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Fore/aft level offset based on wheelbase and pitch angle'>Pitch (in)</span></td>"
-        "<td>%.1f in</td></tr>", pitch_in);
+        "<td id='vPitchIn'>%.1f in</td></tr>", pitch_in);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Raw accelerometer along the X axis in g-force'>Accel X</span></td>"
-        "<td>%.4f g</td></tr>", ax);
+        "<td id='vAx'>%.4f g</td></tr>", ax);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Raw accelerometer along the Y axis in g-force'>Accel Y</span></td>"
-        "<td>%.4f g</td></tr>", ay);
+        "<td id='vAy'>%.4f g</td></tr>", ay);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Raw accelerometer along the Z axis — 1.0 g when flat'>Accel Z</span></td>"
-        "<td>%.4f g</td></tr>", az);
+        "<td id='vAz'>%.4f g</td></tr>", az);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Whether custom MQTT settings are saved or factory defaults are used'>MQTT config</span></td>"
         "<td>%s</td></tr>", s_have_mqtt ? "Saved" : "Defaults");
@@ -2223,7 +2223,17 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "_logToggle();});"
         "window._pollGuide=function(){"
         "fetch('/status.json').then(function(r){return r.json();})"
-        ".then(function(d){if(window.__paintGuide)window.__paintGuide(d);})"
+        ".then(function(d){"
+        "if(window.__paintGuide)window.__paintGuide(d);"
+        "var st=function(id,v){var e=document.getElementById(id);if(e)e.textContent=v;};"
+        "st('vRoll',d.roll_deg.toFixed(3)+'\\u00b0');"
+        "st('vPitch',d.pitch_deg.toFixed(3)+'\\u00b0');"
+        "st('vRollIn',d.roll_in.toFixed(1)+' in');"
+        "st('vPitchIn',d.pitch_in.toFixed(1)+' in');"
+        "st('vAx',d.accel_x.toFixed(4)+' g');"
+        "st('vAy',d.accel_y.toFixed(4)+' g');"
+        "st('vAz',d.accel_z.toFixed(4)+' g');"
+        "})"
         "['catch'](function(){});};"
         "document.addEventListener('DOMContentLoaded',function(){"
         "window._pollGuide();setInterval(window._pollGuide,2000);});"
