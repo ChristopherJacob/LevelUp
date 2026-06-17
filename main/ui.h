@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "leveling.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,8 @@ void ui_toggle_mute_runtime(void);
 void ui_show_rollback_warning(void);
 // Persist current mute/volume to NVS (called by HTTP wizard handler after updating state).
 void ui_save_audio_prefs(void);
+// Update the guidance screen from the latest leveling result.
+void ui_update_guidance(const leveling_result_t *g);
 
 #ifdef __cplusplus
 }

@@ -54,6 +54,7 @@
 #include "esp_random.h"
 #include "audio_mgr.h"
 #include "ui.h"
+#include "leveling.h"
 
 /* ---------------- logging ---------------- */
 static const char *TAG = "wifi_mgr";
@@ -222,6 +223,8 @@ static const size_t s_favicon_png_len = sizeof(s_favicon_png);
 #define NVS_NS_CONFIG       "config"
 #define NVS_KEY_WHEELBASE   "wheelbase_in"
 #define NVS_KEY_TRACKWIDTH  "trackwidth_in"
+#define NVS_KEY_LVL_ORIENT  "lvl_orient"
+#define NVS_KEY_LVL_MODE    "lvl_mode"
 #define NVS_KEY_SCREEN_TO   "screen_to_s"
 
 /* ---------------- AP defaults ---------------- */
@@ -287,6 +290,8 @@ static vprintf_like_t s_orig_vprintf = NULL;
 /* ---------------- vehicle config cache ---------------- */
 static char s_wheelbase_in[16] = {0};
 static char s_trackwidth_in[16] = {0};
+static volatile unsigned char s_lvl_orient = 0; // ORIENT_FRONT_TOP
+static volatile unsigned char s_lvl_mode   = 0; // LEVEL_MODE_BLOCKS
 static float s_wheelbase_val = 133.0f;
 static float s_trackwidth_val = 65.2f;
 static uint32_t s_screen_timeout_s = 60;
@@ -300,6 +305,7 @@ static float s_last_pitch_deg = 0.0f;
 static float s_last_ax = 0.0f;
 static float s_last_ay = 0.0f;
 static float s_last_az = 0.0f;
+static leveling_result_t s_guide;
 
 /* =========================================================
  * Small helpers
@@ -606,6 +612,22 @@ static bool nvs_load_screen_timeout(uint32_t *timeout_s_out)
     return true;
 }
 
+// Load leveling orientation/mode from NVS, clamping to valid ranges.
+static void nvs_load_leveler(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_LEVELER, NVS_READONLY, &h) != ESP_OK) return;
+    uint8_t v = 0;
+    if (nvs_get_u8(h, NVS_KEY_LVL_ORIENT, &v) == ESP_OK) {
+        s_lvl_orient = (v > 3) ? 0 : v;   // leveling_front_t is 0..3
+    }
+    v = 0;
+    if (nvs_get_u8(h, NVS_KEY_LVL_MODE, &v) == ESP_OK) {
+        s_lvl_mode = (v > 1) ? 0 : v;     // leveling_mode_t is 0..1
+    }
+    nvs_close(h);
+}
+
 // Persist Wi-Fi credentials to NVS.
 static esp_err_t nvs_save_wifi(const char *ssid, const char *pass)
 {
@@ -762,6 +784,8 @@ static void nvs_factory_reset(void)
     if (nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h) == ESP_OK) {
         nvs_erase_key(h, NVS_KEY_ROLL0);
         nvs_erase_key(h, NVS_KEY_PITCH0);
+        nvs_erase_key(h, NVS_KEY_LVL_ORIENT);
+        nvs_erase_key(h, NVS_KEY_LVL_MODE);
         nvs_commit(h);
         nvs_close(h);
     }
@@ -868,6 +892,8 @@ static esp_err_t http_config_save_post(httpd_req_t *req);
 static esp_err_t http_favicon_get(httpd_req_t *req);
 static esp_err_t http_network_save_post(httpd_req_t *req);
 static esp_err_t http_display_save_post(httpd_req_t *req);
+static esp_err_t http_leveling_mode_post(httpd_req_t *req);
+static esp_err_t http_wizard_orient_post(httpd_req_t *req);
 
 static void start_captive_portal(void)
 {
@@ -1472,12 +1498,14 @@ static esp_err_t http_status_json_get(httpd_req_t *req)
 
     // Angles
     float roll, pitch, ax, ay, az;
+    leveling_result_t g;
     portENTER_CRITICAL(&s_angle_mux);
     roll = s_last_roll_deg;
     pitch = s_last_pitch_deg;
     ax = s_last_ax;
     ay = s_last_ay;
     az = s_last_az;
+    g = s_guide;
     portEXIT_CRITICAL(&s_angle_mux);
 
     // IP info
@@ -1545,7 +1573,17 @@ static esp_err_t http_status_json_get(httpd_req_t *req)
     send_chunkf(req, "\"imu_age_ms\":%u,", (unsigned)imu_age_ms);
     send_chunkf(req, "\"imu_stationary\":%s,", imu_stationary ? "true" : "false");
     send_chunkf(req, "\"mqtt_connected\":%s,", mqtt_connected ? "true" : "false");
-    send_chunkf(req, "\"screen_on\":%s", screen_on ? "true" : "false");
+    send_chunkf(req, "\"screen_on\":%s,", screen_on ? "true" : "false");
+    send_chunkf(req, "\"lvl_mode\":\"%s\",", wifi_mgr_get_mode() == 1 ? "ramps" : "blocks");
+    send_chunkf(req, "\"guidance_available\":%s,", g.guidance_available ? "true" : "false");
+    send_chunkf(req, "\"is_level\":%s,", g.is_level ? "true" : "false");
+    send_chunkf(req, "\"lift_fl\":%.1f,\"lift_fr\":%.1f,", g.corner_lift_in[0], g.corner_lift_in[1]);
+    send_chunkf(req, "\"lift_rl\":%.1f,\"lift_rr\":%.1f,", g.corner_lift_in[2], g.corner_lift_in[3]);
+    send_chunkf(req, "\"worst_corner\":%d,", (int)g.worst_corner);
+    send_chunkf(req, "\"ramp_axis_is_roll\":%s,", g.ramp_axis_is_roll ? "true" : "false");
+    send_chunkf(req, "\"ramp_lift_left\":%s,", g.ramp_lift_left ? "true" : "false");
+    send_chunkf(req, "\"ramp_lift_front\":%s,", g.ramp_lift_front ? "true" : "false");
+    send_chunkf(req, "\"ramp_remaining_in\":%.1f", g.ramp_remaining_in);
     send_chunk(req, "}");
 
     httpd_resp_send_chunk(req, NULL, 0);
@@ -1785,25 +1823,25 @@ static esp_err_t http_status_get(httpd_req_t *req)
     float pitch_in = tanf(pitch * DEG2RAD) * s_wheelbase_val;
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Left/right tilt in degrees — positive = right side high'>Roll</span></td>"
-        "<td>%.3f&deg;</td></tr>", roll);
+        "<td id='vRoll'>%.3f&deg;</td></tr>", roll);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Front/rear tilt in degrees — positive = nose high'>Pitch</span></td>"
-        "<td>%.3f&deg;</td></tr>", pitch);
+        "<td id='vPitch'>%.3f&deg;</td></tr>", pitch);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Lateral level offset at the axle based on trackwidth and roll angle'>Roll (in)</span></td>"
-        "<td>%.1f in</td></tr>", roll_in);
+        "<td id='vRollIn'>%.1f in</td></tr>", roll_in);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Fore/aft level offset based on wheelbase and pitch angle'>Pitch (in)</span></td>"
-        "<td>%.1f in</td></tr>", pitch_in);
+        "<td id='vPitchIn'>%.1f in</td></tr>", pitch_in);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Raw accelerometer along the X axis in g-force'>Accel X</span></td>"
-        "<td>%.4f g</td></tr>", ax);
+        "<td id='vAx'>%.4f g</td></tr>", ax);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Raw accelerometer along the Y axis in g-force'>Accel Y</span></td>"
-        "<td>%.4f g</td></tr>", ay);
+        "<td id='vAy'>%.4f g</td></tr>", ay);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Raw accelerometer along the Z axis — 1.0 g when flat'>Accel Z</span></td>"
-        "<td>%.4f g</td></tr>", az);
+        "<td id='vAz'>%.4f g</td></tr>", az);
     send_chunkf(req,
         "<tr><td><span class='tip' data-tip='Whether custom MQTT settings are saved or factory defaults are used'>MQTT config</span></td>"
         "<td>%s</td></tr>", s_have_mqtt ? "Saved" : "Defaults");
@@ -1871,6 +1909,54 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "<td><span class='badge %s'>%s</span></td></tr>",
         screen_on ? "ok" : "neu", screen_on ? "ON" : "OFF");
     send_chunk(req, "</table></details></div>");
+
+    /* Leveling guidance card */
+    send_chunk(req,
+        "<div class='card' id='guideCard' style='margin:12px 0;padding:14px;"
+        "border:1px solid var(--border);border-radius:12px'>"
+        "<div style='display:flex;justify-content:space-between;align-items:center'>"
+        "<b>Leveling guidance</b>"
+        "<span id='gMode' style='font-size:12px;color:var(--muted)'></span></div>"
+        "<table style='width:100%;margin-top:8px;border-collapse:collapse;text-align:center'>"
+        "<tr><td colspan=2 style='font-size:10px;color:var(--muted)'>FRONT</td></tr>"
+        "<tr><td id='gFL'>--</td><td id='gFR'>--</td></tr>"
+        "<tr><td id='gRL'>--</td><td id='gRR'>--</td></tr>"
+        "<tr><td colspan=2 style='font-size:10px;color:var(--muted)'>REAR</td></tr></table>"
+        "<div id='gStatus' style='margin-top:8px;font-weight:600'></div>"
+        "<button id='gToggle' style='margin-top:8px' onclick='toggleMode()'>Switch mode</button>"
+        "</div>"
+    );
+    /* Guidance JS — wrapped in DOMContentLoaded since guideCard is in a later chunk */
+    send_chunk(req,
+        "<script>"
+        "function fmt(v){return (v<0.05?'0':v.toFixed(1)+'\"');}"
+        "function paint(d){"
+        "var r=d.lvl_mode==='ramps';"
+        "document.getElementById('gMode').textContent=d.lvl_mode;"
+        "if(!d.guidance_available){document.getElementById('gStatus').textContent="
+        "'Set vehicle dimensions';return;}"
+        "document.getElementById('gFL').textContent=r?'':fmt(d.lift_fl);"
+        "document.getElementById('gFR').textContent=r?'':fmt(d.lift_fr);"
+        "document.getElementById('gRL').textContent=r?'':fmt(d.lift_rl);"
+        "document.getElementById('gRR').textContent=r?'':fmt(d.lift_rr);"
+        "var s;if(d.is_level){s='Level \\u2713';}"
+        "else if(r){var dir=d.ramp_axis_is_roll?(d.ramp_lift_left?'LEFT':'RIGHT')"
+        ":(d.ramp_lift_front?'FRONT':'REAR');"
+        "s='Drive '+dir+' wheels up '+d.ramp_remaining_in.toFixed(1)+'\"';}"
+        "else{var cn=['FRONT-LEFT','FRONT-RIGHT','REAR-LEFT','REAR-RIGHT'];"
+        "s='Raise '+cn[d.worst_corner]+' first';}"
+        "document.getElementById('gStatus').textContent=s;}"
+        "window.__paintGuide=paint;"
+        "function toggleMode(){"
+        "fetch('/status.json').then(function(r){return r.json();}).then(function(d){"
+        "var nm=d.lvl_mode==='ramps'?'blocks':'ramps';"
+        "return fetch('/leveling_mode',{method:'POST',"
+        "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+        "body:'csrf_token='+encodeURIComponent(_csrf)+'&mode='+nm});})"
+        ".then(function(){if(window._pollGuide)window._pollGuide();})"
+        "['catch'](function(){});}"
+        "</script>"
+    );
 
     send_chunk(req,
         "<div class='card'>"
@@ -2135,6 +2221,22 @@ static esp_err_t http_status_get(httpd_req_t *req)
         "else{clearInterval(_logTimer);_logTimer=null;}}"
         "ll.addEventListener('change',_logToggle);"
         "_logToggle();});"
+        "window._pollGuide=function(){"
+        "fetch('/status.json').then(function(r){return r.json();})"
+        ".then(function(d){"
+        "if(window.__paintGuide)window.__paintGuide(d);"
+        "var st=function(id,v){var e=document.getElementById(id);if(e)e.textContent=v;};"
+        "st('vRoll',d.roll_deg.toFixed(3)+'\\u00b0');"
+        "st('vPitch',d.pitch_deg.toFixed(3)+'\\u00b0');"
+        "st('vRollIn',d.roll_in.toFixed(1)+' in');"
+        "st('vPitchIn',d.pitch_in.toFixed(1)+' in');"
+        "st('vAx',d.accel_x.toFixed(4)+' g');"
+        "st('vAy',d.accel_y.toFixed(4)+' g');"
+        "st('vAz',d.accel_z.toFixed(4)+' g');"
+        "})"
+        "['catch'](function(){});};"
+        "document.addEventListener('DOMContentLoaded',function(){"
+        "window._pollGuide();setInterval(window._pollGuide,2000);});"
         "</script>"
         "</details></div></div>"
     );
@@ -2627,6 +2729,33 @@ static const char s_vehicle_b64[] =
     "ooooAKKKKAP/1f1SooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACi"
     "iigAooooAKKKKACiiigD/9k=";
 /* =========================================================
+ * HTTP: /leveling_mode (POST) — switch blocks/ramps mode
+ * ========================================================= */
+// POST /leveling_mode  (form: csrf_token + mode=blocks|ramps)
+static esp_err_t http_leveling_mode_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0 || total > 256) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad len"); return ESP_OK; }
+    char *body = (char *)calloc(1, (size_t)total + 1);
+    if (!body) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No mem"); return ESP_OK; }
+    int rcvd = 0;
+    while (rcvd < total) {
+        int r = httpd_req_recv(req, body + rcvd, total - rcvd);
+        if (r <= 0) { free(body); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv"); return ESP_OK; }
+        rcvd += r;
+    }
+    body[rcvd] = '\0';
+    if (!csrf_ok(body)) { free(body); httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF"); return ESP_OK; }
+    char mode[12] = {0};
+    (void)form_get_value(body, "mode", mode, sizeof(mode));
+    free(body);
+    wifi_mgr_set_mode(strcmp(mode, "ramps") == 0 ? 1 : 0);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+/* =========================================================
  * HTTP: /wizard (GET) — multi-step calibration wizard
  * ========================================================= */
 static esp_err_t http_wizard_get(httpd_req_t *req)
@@ -2734,11 +2863,12 @@ static esp_err_t http_wizard_get(httpd_req_t *req)
         "<body><div class='wizard'>"
         "<div class='wiz-head'>"
         "<h2>Leveler Setup Wizard</h2>"
-        "<p class='wiz-sub' id='stepSub'>Step 1 of 3: Level Reference</p>"
+        "<p class='wiz-sub' id='stepSub'>Step 1 of 4: Level Reference</p>"
         "<div class='dots'>"
         "<div class='dot active' id='dot1'></div>"
         "<div class='dot' id='dot2'></div>"
         "<div class='dot' id='dot3'></div>"
+        "<div class='dot' id='dot4'></div>"
         "</div></div>"
         "<div class='wiz-body'>"
     );
@@ -2773,7 +2903,20 @@ static esp_err_t http_wizard_get(httpd_req_t *req)
         "</div>"   /* end step1 */
     );
 
-    /* Step 2: Audio — split across plain send_chunk calls to stay under the
+    /* Step 2o: Orientation */
+    send_chunk(req,
+        "<div class='step' id='step2o'>"
+        "<p class='desc'>Which screen edge points to the <b>front</b> of the van? "
+        "This lets the guidance name the correct wheels.</p>"
+        "<div style='display:grid;grid-template-columns:1fr 1fr;gap:10px'>"
+        "<button class='wbtn sec' onclick='setOrient(0)'>Top</button>"
+        "<button class='wbtn sec' onclick='setOrient(1)'>Bottom</button>"
+        "<button class='wbtn sec' onclick='setOrient(2)'>Left</button>"
+        "<button class='wbtn sec' onclick='setOrient(3)'>Right</button>"
+        "</div><div class='msg' id='oMsg'></div></div>"
+    );
+
+    /* Step 3 (was 2): Audio — split across plain send_chunk calls to stay under the
        512-byte send_chunkf buffer; only the mute/volume values use chunkf. */
     send_chunk(req,
         "<div class='step' id='step2'>"
@@ -2821,18 +2964,26 @@ static esp_err_t http_wizard_get(httpd_req_t *req)
     send_chunkf(req, "<script>var _csrf='%s';", s_csrf_token);
     send_chunk(req,
         "var pollT=null;"
-        "var SUBS=['Step 1 of 3: Level Reference',"
-        "'Step 2 of 3: Audio Settings',"
-        "'Step 3 of 3: Setup Complete'];"
-        "function goStep(n){"
-        "document.querySelectorAll('.step').forEach(function(s){"
+        "var SUBS=['Step 1 of 4: Level Reference',"
+        "'Step 2 of 4: Orientation',"
+        "'Step 3 of 4: Audio Settings',"
+        "'Step 4 of 4: Setup Complete'];"
+        "var STEP_IDS=['step1','step2o','step2','step3'];"
+        "function goStep(n){document.querySelectorAll('.step').forEach(function(s){"
         "s.classList.remove('active');});"
-        "document.getElementById('step'+n).classList.add('active');"
-        "[1,2,3].forEach(function(i){"
-        "var d=document.getElementById('dot'+i);"
+        "document.getElementById(STEP_IDS[n-1]).classList.add('active');"
+        "[1,2,3,4].forEach(function(i){var d=document.getElementById('dot'+i);"
         "d.className='dot'+(i<n?' done':i===n?' active':'');});"
         "document.getElementById('stepSub').textContent=SUBS[n-1];"
         "if(n===1)startPoll();else stopPoll();}"
+    );
+    send_chunk(req,
+        "function setOrient(v){var m=document.getElementById('oMsg');m.className='msg';"
+        "post('/wizard/orient','&orient='+v).then(function(r){return r.json();})"
+        ".then(function(d){if(d.ok){m.textContent='\\u2713 Saved';m.className='msg ok';"
+        "setTimeout(function(){goStep(3);},700);}"
+        "else{m.textContent='\\u2717 '+(d.error||'failed');m.className='msg err';}})"
+        "['catch'](function(){m.textContent='\\u2717 Failed';m.className='msg err';});}"
         "function startPoll(){"
         "if(pollT)return;"
         "fetchA();pollT=setInterval(fetchA,600);}"
@@ -2854,17 +3005,17 @@ static esp_err_t http_wizard_get(httpd_req_t *req)
         "var m=document.getElementById('zMsg');m.className='msg';"
         "post('/wizard/zero').then(function(r){return r.json();})"
         ".then(function(d){"
-        "if(d.ok){m.textContent='\u2713 Zero set!';m.className='msg ok';"
+        "if(d.ok){m.textContent='\\u2713 Zero set!';m.className='msg ok';"
         "setTimeout(function(){goStep(2);},1000);}"
-        "else{m.textContent='\u2717 '+d.error;m.className='msg err';}})"
-        "['catch'](function(){m.textContent='\u2717 Request failed';m.className='msg err';});}"
+        "else{m.textContent='\\u2717 '+d.error;m.className='msg err';}})"
+        "['catch'](function(){m.textContent='\\u2717 Request failed';m.className='msg err';});}"
         "function doBeep(){"
         "var b=document.querySelector('[onclick=\"doBeep()\"]');"
-        "if(b){b.disabled=true;b.textContent='\u266a Beeping\u2026';}"
+        "if(b){b.disabled=true;b.textContent='\\u266a Beeping\\u2026';}"
         "post('/wizard/beep_test')['catch'](function(){})"
         ".finally(function(){"
         "setTimeout(function(){if(b){b.disabled=false;"
-        "b.textContent='\u25b6 Test Beep';}},900);});}"
+        "b.textContent='\\u25b6 Test Beep';}},900);});}"
         "function doSaveAudio(){"
         "var m=document.getElementById('aMsg');m.className='msg';"
         "var v=document.getElementById('volSlider').value;"
@@ -2872,10 +3023,10 @@ static esp_err_t http_wizard_get(httpd_req_t *req)
         "post('/wizard/audio_save','&volume='+v+'&muted='+mu)"
         ".then(function(r){return r.json();})"
         ".then(function(d){"
-        "if(d.ok){m.textContent='\u2713 Saved!';m.className='msg ok';"
-        "setTimeout(function(){goStep(3);},800);}"
-        "else{m.textContent='\u2717 '+d.error;m.className='msg err';}})"
-        "['catch'](function(){m.textContent='\u2717 Request failed';m.className='msg err';});}"
+        "if(d.ok){m.textContent='\\u2713 Saved!';m.className='msg ok';"
+        "setTimeout(function(){goStep(4);},800);}"
+        "else{m.textContent='\\u2717 '+d.error;m.className='msg err';}})"
+        "['catch'](function(){m.textContent='\\u2717 Request failed';m.className='msg err';});}"
         "startPoll();"
         "</script>"
     );
@@ -2924,6 +3075,35 @@ static esp_err_t http_wizard_zero_post(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+/* =========================================================
+ * HTTP: /wizard/orient (POST) — save screen orientation
+ * ========================================================= */
+// POST /wizard/orient  (form: csrf_token + orient=0..3)
+static esp_err_t http_wizard_orient_post(httpd_req_t *req)
+{
+    int total = req->content_len;
+    if (total <= 0 || total > 256) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad len"); return ESP_OK; }
+    char *body = (char *)calloc(1, (size_t)total + 1);
+    if (!body) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No mem"); return ESP_OK; }
+    int rcvd = 0;
+    while (rcvd < total) {
+        int r = httpd_req_recv(req, body + rcvd, total - rcvd);
+        if (r <= 0) { free(body); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv"); return ESP_OK; }
+        rcvd += r;
+    }
+    body[rcvd] = '\0';
+    if (!csrf_ok(body)) { free(body); httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "CSRF"); return ESP_OK; }
+    char ov[8] = {0};
+    (void)form_get_value(body, "orient", ov, sizeof(ov));
+    free(body);
+    int o = atoi(ov);
+    if (o < 0 || o > 3) o = 0;
+    wifi_mgr_set_orient((unsigned char)o);
+    httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
@@ -3029,7 +3209,7 @@ static esp_err_t http_wizard_audio_save_post(httpd_req_t *req)
 static httpd_handle_t start_http_server(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 25;  /* 20 existing + 4 wizard + 1 headroom */
+    cfg.max_uri_handlers = 28;  /* 26 handlers + 2 headroom */
     cfg.stack_size = 8192;  // extra headroom for OTA flash writes
     cfg.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -3102,6 +3282,14 @@ static httpd_handle_t start_http_server(void)
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &display_save);
+
+    httpd_uri_t leveling_mode = {
+        .uri = "/leveling_mode",
+        .method = HTTP_POST,
+        .handler = http_leveling_mode_post,
+        .user_ctx = NULL,
+    };
+    httpd_register_uri_handler(server, &leveling_mode);
 
     // Status
     httpd_uri_t status = {
@@ -3236,6 +3424,14 @@ static httpd_handle_t start_http_server(void)
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &wizard_audio);
+
+    httpd_uri_t wizard_orient = {
+        .uri = "/wizard/orient",
+        .method = HTTP_POST,
+        .handler = http_wizard_orient_post,
+        .user_ctx = NULL,
+    };
+    httpd_register_uri_handler(server, &wizard_orient);
 
     // Captive portal-ish wildcard: serve setup UI for unknown GETs
     httpd_uri_t wildcard = {
@@ -3559,6 +3755,7 @@ esp_err_t wifi_mgr_init(void)
     (void)nvs_load_screen_timeout(&s_screen_timeout_s);
     s_wheelbase_val = parse_or_default(s_wheelbase_in, 133.0f);
     s_trackwidth_val = parse_or_default(s_trackwidth_in, 65.2f);
+    nvs_load_leveler();
     mqtt_mgr_set_vehicle_config(s_wheelbase_val, s_trackwidth_val);
     lvgl_port_set_screen_timeout_ms(s_screen_timeout_s * 1000U);
 
@@ -3592,6 +3789,49 @@ float wifi_mgr_get_trackwidth_in(void)
     return s_trackwidth_val;
 }
 
+unsigned char wifi_mgr_get_orient(void) { return s_lvl_orient; }
+unsigned char wifi_mgr_get_mode(void)   { return s_lvl_mode; }
+
+void wifi_mgr_set_mode(unsigned char mode)
+{
+    if (mode > 1) {
+        ESP_LOGW(TAG, "set_mode: invalid mode %u, clamping to BLOCKS", mode);
+        mode = 0;
+    }
+    s_lvl_mode = mode;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set_mode: nvs_open failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = nvs_set_u8(h, NVS_KEY_LVL_MODE, mode);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_mode: nvs_set_u8 failed: %s", esp_err_to_name(err));
+    err = nvs_commit(h);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_mode: nvs_commit failed: %s", esp_err_to_name(err));
+    nvs_close(h);
+}
+
+void wifi_mgr_set_orient(unsigned char orient)
+{
+    if (orient > 3) {
+        ESP_LOGW(TAG, "set_orient: invalid orient %u, clamping to TOP", orient);
+        orient = 0;
+    }
+    s_lvl_orient = orient;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS_LEVELER, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set_orient: nvs_open failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = nvs_set_u8(h, NVS_KEY_LVL_ORIENT, orient);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_orient: nvs_set_u8 failed: %s", esp_err_to_name(err));
+    err = nvs_commit(h);
+    if (err != ESP_OK) ESP_LOGW(TAG, "set_orient: nvs_commit failed: %s", esp_err_to_name(err));
+    nvs_close(h);
+}
+
 // Update latest filtered angles for status endpoints.
 void wifi_mgr_update_angles(float roll_deg, float pitch_deg)
 {
@@ -3608,5 +3848,14 @@ void wifi_mgr_update_accel(float ax, float ay, float az)
     s_last_ax = ax;
     s_last_ay = ay;
     s_last_az = az;
+    portEXIT_CRITICAL(&s_angle_mux);
+}
+
+// Push latest leveling guidance for /status.
+void wifi_mgr_update_guidance(const leveling_result_t *g)
+{
+    if (!g) return;
+    portENTER_CRITICAL(&s_angle_mux);
+    s_guide = *g;
     portEXIT_CRITICAL(&s_angle_mux);
 }
