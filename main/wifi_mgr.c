@@ -1327,14 +1327,19 @@ static esp_err_t http_config_save_post(httpd_req_t *req)
 /* =========================================================
  * HTTP: /wifi_setup (POST) — drop to AP setup mode, non-destructive
  * ========================================================= */
-static esp_timer_handle_t s_ap_switch_timer = NULL;
+static volatile bool s_ap_switch_pending = false;
 
-// Fires shortly after the HTTP response so the browser receives it before STA drops.
-static void wifi_setup_timer_cb(void *arg)
+// One-shot task: waits so the HTTP response reaches the browser, then switches
+// to AP mode. Runs on its own stack (start_ap() does wifi init + HTTP server +
+// captive portal, which is too deep for the shared esp_timer task stack).
+static void wifi_setup_task(void *arg)
 {
     (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(750));
     ESP_LOGW(TAG, "User requested Wi-Fi setup: switching to AP mode");
     start_ap();
+    s_ap_switch_pending = false;
+    vTaskDelete(NULL);
 }
 
 static esp_err_t http_wifi_setup_post(httpd_req_t *req)
@@ -1377,7 +1382,7 @@ static esp_err_t http_wifi_setup_post(httpd_req_t *req)
         return ESP_OK;
     }
 
-    httpd_resp_sendstr(req,
+    esp_err_t sret = httpd_resp_sendstr(req,
         "<html><body style='font-family:system-ui;margin:40px'>"
         "<h3>Switching to Wi-Fi setup mode\xe2\x80\xa6</h3>"
         "<p>Connect your phone to the <b>Leveler-XXXX</b> Wi-Fi network "
@@ -1388,19 +1393,20 @@ static esp_err_t http_wifi_setup_post(httpd_req_t *req)
         "dimensions) are preserved.</p>"
         "</body></html>");
 
-    // Defer the actual AP switch so the response reaches the browser first.
-    if (!s_ap_switch_timer) {
-        const esp_timer_create_args_t targs = {
-            .callback = wifi_setup_timer_cb,
-            .name = "ap_switch",
-        };
-        if (esp_timer_create(&targs, &s_ap_switch_timer) != ESP_OK) {
-            ESP_LOGW(TAG, "ap_switch timer create failed; switching to AP now");
+    // Only switch if the client actually received the instructions.
+    if (sret != ESP_OK) {
+        return ESP_OK;
+    }
+
+    // Defer the AP switch (own task / stack) so the response is delivered first.
+    if (!s_ap_switch_pending) {
+        s_ap_switch_pending = true;
+        if (xTaskCreate(wifi_setup_task, "wifi_setup", 6144, NULL, 5, NULL) != pdPASS) {
+            ESP_LOGW(TAG, "wifi_setup task create failed; switching to AP now");
+            s_ap_switch_pending = false;
             start_ap();
-            return ESP_OK;
         }
     }
-    esp_timer_start_once(s_ap_switch_timer, 750000); // 750 ms
     return ESP_OK;
 }
 
