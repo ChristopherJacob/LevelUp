@@ -25,6 +25,7 @@ class LevelUpBubbleCard extends HTMLElement {
   }
 
   _build() {
+    console.log('🔵 LevelUp card building with config:', this._cfg);
     const { title: t, size: s } = this._cfg;
     this.innerHTML = `<ha-card>
       <div id="lbc-root" style="display:flex;flex-direction:column;align-items:center;padding:16px 8px;gap:8px;background:var(--card-background-color,#1c1c1e);border-radius:12px;">
@@ -139,4 +140,5 @@ class LevelUpBubbleCard extends HTMLElement {
 
   getCardSize() { return 3; }
 }
+console.log('🔵 LevelUp Bubble Card registered');
 customElements.define('levelup-bubble-card', LevelUpBubbleCard);
